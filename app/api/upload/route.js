@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { uploadFile, saveFileMetadata, getCurrentUser } from '../../../lib/supabase'
+import { uploadFile, saveFileMetadata, getCurrentUser } from '../lib/supabase'
 import { parseFile } from '../lib/fileParser'
 
 export async function POST(request) {
@@ -59,3 +59,4 @@ export async function POST(request) {
   }
 
 }
+
