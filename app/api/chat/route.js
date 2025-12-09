@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { chatWithAI } from '../lib/gemini'
-import { getUserFiles, getCurrentUser } from '../lib/supabase'
+import { chatWithAI } from '../../../lib/gemini'
+import { getUserFiles, getCurrentUser } from '../../../lib/supabase'
 
 export async function POST(request) {
   try {
@@ -41,5 +41,4 @@ export async function POST(request) {
       { status: 500 }
     )
   }
-
 }
