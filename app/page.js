@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/contexts/AuthContext'
+import { useAuth } from '../contexts/AuthContext'
 import React, { useState } from 'react';
 import { Upload, Send, FileText, Loader2, Trash2, Sparkles, Database, LogOut } from 'lucide-react';
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '../lib/supabase'
 import { useRouter } from 'next/navigation'
 
 const AuthContext = createContext({})
@@ -20,13 +20,11 @@ export function AuthProvider({ children }) {
   const router = useRouter()
 
   useEffect(() => {
-    // Check active session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       setLoading(false)
     })
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
     })

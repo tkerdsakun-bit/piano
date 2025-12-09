@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server'
-import { chatWithAI } from '@/lib/gemini'
-import { getUserFiles, getCurrentUser } from '@/lib/supabase'
+import { chatWithAI } from '../../../lib/gemini'
+import { getUserFiles, getCurrentUser } from '../../../lib/supabase'
 
 export async function POST(request) {
   try {
-    // Check authentication
     const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json(
@@ -22,16 +21,13 @@ export async function POST(request) {
       )
     }
 
-    // Get only user's files from database
     const files = await getUserFiles(user.id)
 
-    // Prepare file contents for AI
     const fileContents = files.map(file => ({
       name: file.name,
       content: file.content
     }))
 
-    // Get AI response
     const response = await chatWithAI(message, fileContents)
 
     return NextResponse.json({

@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server'
-import { uploadFile, saveFileMetadata, getCurrentUser } from '@/lib/supabase'
-import { parseFile } from '@/lib/fileParser'
+import { uploadFile, saveFileMetadata, getCurrentUser } from '../../../lib/supabase'
+import { parseFile } from '../../../lib/fileParser'
 
 export async function POST(request) {
   try {
-    // Check authentication
     const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json(
@@ -23,17 +22,13 @@ export async function POST(request) {
       )
     }
 
-    // Generate unique filename
     const timestamp = Date.now()
     const fileName = `${timestamp}_${file.name}`
 
-    // Parse file content
     const content = await parseFile(file, file.type)
 
-    // Upload to Supabase Storage (in user's folder)
     const uploadData = await uploadFile(file, fileName, user.id)
 
-    // Save metadata to database
     const fileMetadata = {
       name: file.name,
       file_path: uploadData.path,
