@@ -1,25 +1,22 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { chatWithAI } from '../../../lib/gemini'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-export async function POST(request) {
+export async function GET(request) {
   try {
-    // Get auth token from header
     const authHeader = request.headers.get('authorization')
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return NextResponse.json(
-        { error: 'Unauthorized - No token provided' },
+        { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
     const token = authHeader.replace('Bearer ', '')
 
-    // Create Supabase client with user's token
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: {
         headers: {
@@ -28,27 +25,16 @@ export async function POST(request) {
       }
     })
 
-    // Get user
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      console.error('Auth error:', authError)
       return NextResponse.json(
-        { error: 'Unauthorized - Invalid token' },
+        { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const { message } = await request.json()
-
-    if (!message) {
-      return NextResponse.json(
-        { error: 'No message provided' },
-        { status: 400 }
-      )
-    }
-
-    // Get user's files from database
+    // Get ALL user's files
     const { data: files, error: filesError } = await supabase
       .from('files')
       .select('*')
@@ -58,28 +44,28 @@ export async function POST(request) {
     if (filesError) {
       console.error('Files error:', filesError)
       return NextResponse.json(
-        { error: `Failed to fetch files: ${filesError.message}` },
+        { error: filesError.message },
         { status: 500 }
       )
     }
 
-    // Prepare file contents for AI
-    const fileContents = files.map(file => ({
+    // Format files for frontend
+    const formattedFiles = files.map(file => ({
+      id: file.id,
       name: file.name,
-      content: file.content
+      size: `${(file.file_size / 1024).toFixed(2)} KB`,
+      type: file.file_type,
+      uploadedAt: new Date(file.created_at).toLocaleString()
     }))
-
-    // Get AI response
-    const response = await chatWithAI(message, fileContents)
 
     return NextResponse.json({
       success: true,
-      response: response
+      files: formattedFiles
     })
   } catch (error) {
-    console.error('Chat error:', error)
+    console.error('Error fetching files:', error)
     return NextResponse.json(
-      { error: error.message || 'Chat failed' },
+      { error: error.message || 'Failed to fetch files' },
       { status: 500 }
     )
   }
