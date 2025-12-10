@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { uploadFile, saveFileMetadata, getCurrentUser } from '../../../lib/supabase'
-import { parseFile } from '../../../lib/fileParser'
+import { uploadFile, saveFileMetadata, getCurrentUser } from '../lib/supabase'
+import { parseFile } from '../lib/fileParser'
 
 export async function POST(request) {
   try {
@@ -15,7 +15,7 @@ export async function POST(request) {
     const formData = await request.formData()
     const file = formData.get('file')
 
-    if (!file) {
+    if (!file || !(file instanceof File)) {
       return NextResponse.json(
         { error: 'No file provided' },
         { status: 400 }
@@ -25,9 +25,14 @@ export async function POST(request) {
     const timestamp = Date.now()
     const fileName = `${timestamp}_${file.name}`
 
-    const content = await parseFile(file, file.type)
+    // Convert file to buffer for parsing
+    const arrayBuffer = await file.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+    
+    const content = await parseFile(buffer, file.type)
 
-    const uploadData = await uploadFile(file, fileName, user.id)
+    // Upload buffer to Supabase
+    const uploadData = await uploadFile(buffer, fileName, user.id)
 
     const fileMetadata = {
       name: file.name,
