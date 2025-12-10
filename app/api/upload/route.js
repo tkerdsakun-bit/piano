@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server'
-import { uploadFile, saveFileMetadata, getCurrentUser } from '../../../lib/supabase'
+import { createClient } from '../../../lib/supabase-server'
 import { parseFile } from '../../../lib/fileParser'
+import { uploadFile, saveFileMetadata } from '../../../lib/supabase'
 
 export async function POST(request) {
   try {
-    const user = await getCurrentUser()
-    if (!user) {
+    // Get user from server-side Supabase client
+    const supabase = createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized - Please log in again' },
         { status: 401 }
       )
     }
@@ -15,7 +19,7 @@ export async function POST(request) {
     const formData = await request.formData()
     const file = formData.get('file')
 
-    if (!file || !(file instanceof File)) {
+    if (!file) {
       return NextResponse.json(
         { error: 'No file provided' },
         { status: 400 }
@@ -25,15 +29,9 @@ export async function POST(request) {
     const timestamp = Date.now()
     const fileName = `${timestamp}_${file.name}`
 
-    // Convert File to ArrayBuffer, then to Buffer
-    const arrayBuffer = await file.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
+    const content = await parseFile(file, file.type)
 
-    // Parse the buffer instead of the File object
-    const content = await parseFile(buffer, file.type)
-
-    // Upload the buffer instead of the File object
-    const uploadData = await uploadFile(buffer, fileName, user.id)
+    const uploadData = await uploadFile(file, fileName, user.id)
 
     const fileMetadata = {
       name: file.name,
