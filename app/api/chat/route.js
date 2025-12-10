@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { chatWithAI } from '../../../lib/gemini'; // Make sure to update the path if needed
+import { chatWithAI } from '../../../lib/gemini';  // Importing the chatWithAI function from lib/gemini
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export async function POST(request) {
   try {
+    // Check for authorization token
     const authHeader = request.headers.get('authorization');
-    
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return NextResponse.json(
         { error: 'Unauthorized - No token provided' },
@@ -26,6 +26,7 @@ export async function POST(request) {
       },
     });
 
+    // Get the authenticated user
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
@@ -36,6 +37,7 @@ export async function POST(request) {
       );
     }
 
+    // Get the message from the request
     const { message } = await request.json();
 
     if (!message) {
@@ -45,6 +47,7 @@ export async function POST(request) {
       );
     }
 
+    // Fetch files from Supabase (optional: if you want to include user-uploaded files)
     const { data: files, error: filesError } = await supabase
       .from('files')
       .select('*')
@@ -59,13 +62,15 @@ export async function POST(request) {
       );
     }
 
-    const fileContents = files.map(file => ({
+    // Map file contents to pass to the AI model
+    const fileContents = files.map((file) => ({
       name: file.name,
       content: file.content || '',
     }));
 
     console.log(`Processing ${files.length} files for user ${user.id}`);
 
+    // Call the chatWithAI function to generate a response using OpenAI
     const response = await chatWithAI(message, fileContents);
 
     return NextResponse.json({
