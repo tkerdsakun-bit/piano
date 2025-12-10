@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server'
+import { createClient } from '../../../lib/supabase-server'
 import { chatWithAI } from '../../../lib/gemini'
-import { getUserFiles, getCurrentUser } from '../../../lib/supabase'
+import { getUserFiles } from '../../../lib/supabase'
 
 export async function POST(request) {
   try {
-    const user = await getCurrentUser()
-    if (!user) {
+    // Get user from server-side Supabase client
+    const supabase = createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized - Please log in again' },
         { status: 401 }
       )
     }
