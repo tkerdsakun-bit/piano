@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import React, { useState } from 'react'
-import { Upload, Send, FileText, Loader2, Trash2, Sparkles, Database, LogOut, Download, X, AlertCircle, CheckCircle } from 'lucide-react'
+import { Upload, Send, FileText, Loader2, Trash2, Sparkles, Database, LogOut, Download, X, AlertCircle, CheckCircle, Menu } from 'lucide-react'
 
 export default function AIChatbot() {
   const { user, loading: authLoading, signOut } = useAuth()
@@ -17,22 +17,20 @@ export default function AIChatbot() {
   const [uploadedFiles, setUploadedFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
   const [uploadProgress, setUploadProgress] = useState([])
-  const [notification, setNotification] = useState(null) // Toast notification
+  const [notification, setNotification] = useState(null)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false) // 🆕 Mobile sidebar toggle
   const chatAreaRef = useRef(null)
   const messagesEndRef = useRef(null)
 
-  // 🆕 Toast Notification
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type })
     setTimeout(() => setNotification(null), 4000)
   }
 
-  // 🆕 Auto-scroll เมื่อมี Message ใหม่
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // โหลดไฟล์จาก Database
   const loadUserFiles = async () => {
     if (!user) return
     
@@ -74,36 +72,12 @@ export default function AIChatbot() {
     }
   }, [user, authLoading, router])
 
-  // 🆕 ฟังก์ชันอัปโหลดไฟล์ (รองรับหลายไฟล์)
   const uploadFiles = async (files) => {
     if (!files || files.length === 0) return
 
     const fileArray = Array.from(files)
-    const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
-    const ALLOWED_TYPES = [
-      'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
-      'text/plain'
-    ]
-
-    // 🆕 ตรวจสอบไฟล์ก่อนอัปโหลด
-    const invalidFiles = fileArray.filter(file => {
-      if (file.size > MAX_FILE_SIZE) {
-        showNotification(`${file.name} ใหญ่เกิน 10 MB`, 'error')
-        return true
-      }
-      if (!ALLOWED_TYPES.includes(file.type) && !file.name.endsWith('.txt')) {
-        showNotification(`${file.name} ไม่รองรับไฟล์ประเภทนี้`, 'error')
-        return true
-      }
-      return false
-    })
-
-    const validFiles = fileArray.filter(f => !invalidFiles.includes(f))
-    if (validFiles.length === 0) return
-
+    const MAX_FILE_SIZE = 50 * 1024 * 1024
+    
     setLoading(true)
     
     try {
@@ -114,11 +88,14 @@ export default function AIChatbot() {
       }
 
       let successCount = 0
-      let failCount = 0
 
-      // อัปโหลดทีละไฟล์
-      for (let i = 0; i < validFiles.length; i++) {
-        const file = validFiles[i]
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i]
+        
+        if (file.size > MAX_FILE_SIZE) {
+          showNotification(`${file.name} ใหญ่เกิน 50 MB`, 'error')
+          continue
+        }
         
         setUploadProgress(prev => [...prev, {
           name: file.name,
@@ -126,59 +103,66 @@ export default function AIChatbot() {
         }])
 
         try {
-          const formData = new FormData()
-          formData.append('file', file)
+          const timestamp = Date.now()
+          const fileName = `${timestamp}_${file.name}`
+          const filePath = `${user.id}/${fileName}`
 
-          const response = await fetch('/api/upload', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`
-            },
-            body: formData
-          })
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(filePath, file, {
+              cacheControl: '3600',
+              upsert: false
+            })
 
-          if (!response.ok) {
-            const error = await response.json()
-            throw new Error(error.error || 'Upload failed')
-          }
+          if (uploadError) throw uploadError
+
+          setUploadProgress(prev => prev.map(p => 
+            p.name === file.name ? { ...p, progress: 70 } : p
+          ))
+
+          const content = `📄 ไฟล์: ${file.name}\n📊 ขนาด: ${(file.size / 1024).toFixed(2)} KB\n📅 อัปโหลด: ${new Date().toLocaleString('th-TH')}`
+
+          const { error: dbError } = await supabase
+            .from('files')
+            .insert([{
+              user_id: user.id,
+              name: file.name,
+              file_path: uploadData.path,
+              file_type: file.type,
+              file_size: file.size,
+              content: content
+            }])
+
+          if (dbError) throw dbError
 
           setUploadProgress(prev => prev.map(p => 
             p.name === file.name ? { ...p, progress: 100 } : p
           ))
+          
           successCount++
 
         } catch (error) {
           console.error(`Upload error for ${file.name}:`, error)
-          failCount++
+          showNotification(`${file.name}: ${error.message}`, 'error')
           setUploadProgress(prev => prev.filter(p => p.name !== file.name))
         }
       }
 
-      await loadUserFiles()
-      
-      // แจ้งผลการอัปโหลด
       if (successCount > 0) {
+        await loadUserFiles()
         showNotification(`✅ อัปโหลดสำเร็จ ${successCount} ไฟล์`, 'success')
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: `✅ อัปโหลดสำเร็จ ${successCount} ไฟล์${failCount > 0 ? ` (ล้มเหลว ${failCount} ไฟล์)` : ''}`
-        }])
-      }
-      
-      if (failCount > 0 && successCount === 0) {
-        showNotification(`❌ อัปโหลดล้มเหลวทั้งหมด`, 'error')
+        setIsSidebarOpen(false) // 🆕 ปิด sidebar หลังอัปโหลดบน mobile
       }
 
     } catch (error) {
       console.error('Upload error:', error)
-      showNotification('อัปโหลดล้มเหลว: ' + error.message, 'error')
+      showNotification('อัปโหลดล้มเหลว', 'error')
     } finally {
       setLoading(false)
       setTimeout(() => setUploadProgress([]), 1000)
     }
   }
 
-  // 🆕 Drag & Drop
   const handleDragOver = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -188,7 +172,6 @@ export default function AIChatbot() {
   const handleDragLeave = (e) => {
     e.preventDefault()
     e.stopPropagation()
-    // ตรวจสอบว่าออกจากพื้นที่จริงๆ
     if (e.currentTarget === e.target) {
       setIsDragging(false)
     }
@@ -205,10 +188,8 @@ export default function AIChatbot() {
     }
   }
 
-  // 🆕 Paste (Ctrl+V) - ปรับปรุงให้ไม่ conflict กับ input
   useEffect(() => {
     const handlePaste = (e) => {
-      // ไม่ทำงานถ้ากำลังพิมพ์ใน input
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
         return
       }
@@ -345,25 +326,46 @@ export default function AIChatbot() {
   }
 
   return (
-    <div className="flex h-screen bg-black text-white">
-      {/* 🆕 Toast Notification */}
+    <div className="flex h-screen bg-black text-white overflow-hidden">
+      {/* Toast Notification */}
       {notification && (
-        <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-6 py-4 rounded-lg shadow-2xl border animate-fade-in ${
+        <div className={`fixed top-4 right-4 z-[60] flex items-center gap-3 px-4 py-3 rounded-lg shadow-2xl border animate-fade-in max-w-[90vw] ${
           notification.type === 'success' ? 'bg-green-500/10 border-green-500/50 text-green-400' :
           notification.type === 'error' ? 'bg-red-500/10 border-red-500/50 text-red-400' :
           'bg-blue-500/10 border-blue-500/50 text-blue-400'
         }`}>
-          {notification.type === 'success' && <CheckCircle className="w-5 h-5" />}
-          {notification.type === 'error' && <AlertCircle className="w-5 h-5" />}
-          <span className="font-medium">{notification.message}</span>
+          {notification.type === 'success' && <CheckCircle className="w-5 h-5 flex-shrink-0" />}
+          {notification.type === 'error' && <AlertCircle className="w-5 h-5 flex-shrink-0" />}
+          <span className="font-medium text-sm">{notification.message}</span>
           <button onClick={() => setNotification(null)} className="ml-2">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* Left Sidebar */}
-      <div className="w-80 bg-black border-r border-gray-800 flex flex-col">
+      {/* 🆕 Mobile Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Left Sidebar - 🆕 Mobile Responsive */}
+      <div className={`
+        fixed lg:relative inset-y-0 left-0 z-50
+        w-80 bg-black border-r border-gray-800 flex flex-col
+        transform transition-transform duration-300 ease-in-out
+        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        {/* 🆕 Mobile Close Button */}
+        <button
+          onClick={() => setIsSidebarOpen(false)}
+          className="lg:hidden absolute top-4 right-4 p-2 text-gray-400 hover:text-white"
+        >
+          <X className="w-6 h-6" />
+        </button>
+
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -377,7 +379,7 @@ export default function AIChatbot() {
           
           <label className="flex items-center justify-center gap-2 px-4 py-3 bg-white text-black rounded-lg hover:bg-gray-200 transition-all cursor-pointer font-medium">
             <Upload className="w-4 h-4" />
-            Upload File
+            Upload
             <input
               type="file"
               onChange={handleFileUpload}
@@ -386,7 +388,7 @@ export default function AIChatbot() {
               multiple
             />
           </label>
-          <p className="text-xs text-gray-600 mt-2 text-center">Max 10 MB per file</p>
+          <p className="text-xs text-gray-600 mt-2 text-center">Max 50 MB</p>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -394,35 +396,32 @@ export default function AIChatbot() {
             <div className="text-center py-12">
               <FileText className="w-16 h-16 text-gray-700 mx-auto mb-4" />
               <p className="text-gray-500 mb-2">No files yet</p>
-              <p className="text-sm text-gray-600">Upload, drag & drop, or paste files</p>
+              <p className="text-sm text-gray-600">Upload files to start</p>
             </div>
           ) : (
             <div className="space-y-2">
               {uploadedFiles.map((file) => (
-                <div key={file.id} className="flex items-start gap-3 p-3 bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors border border-gray-800">
+                <div key={file.id} className="flex items-start gap-2 p-3 bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors border border-gray-800">
                   <FileText className="w-5 h-5 text-white mt-1 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-white truncate">{file.name}</div>
-                    <div className="text-sm text-gray-400">{file.size}</div>
-                    <div className="text-xs text-gray-600">{file.uploadedAt}</div>
+                    <div className="font-medium text-white truncate text-sm">{file.name}</div>
+                    <div className="text-xs text-gray-400">{file.size}</div>
                   </div>
                   
                   <button
                     onClick={() => handleDownloadFile(file)}
                     className="p-2 text-blue-400 hover:bg-gray-800 rounded-lg transition-colors"
-                    title="ดาวน์โหลด"
                     disabled={loading}
                   >
-                    <Download className="w-5 h-5" />
+                    <Download className="w-4 h-4" />
                   </button>
                   
                   <button
                     onClick={() => handleDeleteFile(file)}
                     className="p-2 text-red-500 hover:bg-gray-800 rounded-lg transition-colors"
-                    title="ลบ"
                     disabled={loading}
                   >
-                    <Trash2 className="w-5 h-5" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               ))}
@@ -432,15 +431,15 @@ export default function AIChatbot() {
 
         <div className="p-4 border-t border-gray-800">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-white text-black rounded-full flex items-center justify-center font-bold">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 bg-white text-black rounded-full flex items-center justify-center font-bold flex-shrink-0">
                 {user?.email?.[0].toUpperCase()}
               </div>
-              <span className="text-sm text-gray-400 truncate max-w-[180px]">{user?.email}</span>
+              <span className="text-sm text-gray-400 truncate">{user?.email}</span>
             </div>
             <button
               onClick={signOut}
-              className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+              className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
             >
               <LogOut className="w-5 h-5" />
             </button>
@@ -450,34 +449,32 @@ export default function AIChatbot() {
 
       {/* Main Chat Area */}
       <div 
-        className="flex-1 flex flex-col bg-black relative"
+        className="flex-1 flex flex-col bg-black relative w-full"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         ref={chatAreaRef}
       >
-        {/* Drag & Drop Overlay */}
         {isDragging && (
           <div className="absolute inset-0 bg-white/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-white/50 rounded-lg m-2">
-            <div className="text-center">
+            <div className="text-center px-4">
               <Upload className="w-16 h-16 text-white mx-auto mb-4 animate-bounce" />
               <p className="text-2xl font-bold text-white">Drop files here</p>
-              <p className="text-gray-300 mt-2">PDF, Word, Excel, Text (Max 10 MB)</p>
+              <p className="text-gray-300 mt-2 text-sm">PDF, Word, Excel, Text</p>
             </div>
           </div>
         )}
 
-        {/* Upload Progress */}
         {uploadProgress.length > 0 && (
-          <div className="absolute top-4 right-4 bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-2xl z-40 min-w-[300px]">
+          <div className="absolute top-4 right-4 bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-2xl z-40 min-w-[280px] max-w-[90vw]">
             <div className="flex items-center justify-between mb-3">
-              <span className="font-semibold text-white">Uploading...</span>
+              <span className="font-semibold text-white text-sm">Uploading...</span>
               <Loader2 className="w-4 h-4 animate-spin text-white" />
             </div>
             {uploadProgress.map((file, i) => (
               <div key={i} className="mb-2 last:mb-0">
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-gray-300 truncate max-w-[200px]">{file.name}</span>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-gray-300 truncate max-w-[180px]">{file.name}</span>
                   <span className="text-gray-400">{file.progress}%</span>
                 </div>
                 <div className="w-full bg-gray-800 rounded-full h-2">
@@ -492,68 +489,76 @@ export default function AIChatbot() {
         )}
 
         {/* Header */}
-        <div className="bg-black border-b border-gray-800 px-6 py-4">
+        <div className="bg-black border-b border-gray-800 px-4 lg:px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center">
+            {/* 🆕 Mobile Menu Button */}
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="lg:hidden p-2 hover:bg-gray-800 rounded-lg transition-colors"
+            >
+              <Menu className="w-6 h-6 text-white" />
+            </button>
+
+            <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center flex-shrink-0">
               <Sparkles className="w-6 h-6 text-black" />
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-white">AI Assistant</h1>
-              <p className="text-sm text-gray-500">Drag, paste, or upload files • Ask anything</p>
+            <div className="min-w-0">
+              <h1 className="text-lg lg:text-xl font-bold text-white">AI Assistant</h1>
+              <p className="text-xs lg:text-sm text-gray-500 truncate">Ask anything about your files</p>
             </div>
           </div>
         </div>
 
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 lg:p-6">
           {messages.length === 0 ? (
-            <div className="max-w-2xl mx-auto text-center py-12">
-              <div className="w-20 h-20 bg-gray-900 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-gray-800">
-                <Sparkles className="w-10 h-10 text-white" />
+            <div className="max-w-2xl mx-auto text-center py-8 lg:py-12">
+              <div className="w-16 h-16 lg:w-20 lg:h-20 bg-gray-900 rounded-2xl flex items-center justify-center mx-auto mb-4 lg:mb-6 border border-gray-800">
+                <Sparkles className="w-8 h-8 lg:w-10 lg:h-10 text-white" />
               </div>
-              <h2 className="text-2xl font-bold text-white mb-3">
-                Welcome to AI Document Assistant
+              <h2 className="text-xl lg:text-2xl font-bold text-white mb-2 lg:mb-3">
+                AI Document Assistant
               </h2>
-              <p className="text-gray-500 mb-8">
-                Upload, drag & drop, or paste files. Ask questions and get instant insights.
+              <p className="text-gray-500 mb-6 lg:mb-8 text-sm lg:text-base px-4">
+                Upload files and get instant insights
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
-                <div className="p-4 bg-gray-900 rounded-lg border border-gray-800 hover:border-gray-700 transition-colors">
-                  <p className="text-sm text-gray-400">💡 Drag & drop files anywhere</p>
+              <div className="grid grid-cols-1 gap-3 lg:gap-4 text-left px-4">
+                <div className="p-3 lg:p-4 bg-gray-900 rounded-lg border border-gray-800">
+                  <p className="text-xs lg:text-sm text-gray-400">💡 Drag & drop files</p>
                 </div>
-                <div className="p-4 bg-gray-900 rounded-lg border border-gray-800 hover:border-gray-700 transition-colors">
-                  <p className="text-sm text-gray-400">📋 Paste files with Ctrl+V</p>
+                <div className="p-3 lg:p-4 bg-gray-900 rounded-lg border border-gray-800">
+                  <p className="text-xs lg:text-sm text-gray-400">📋 Paste with Ctrl+V</p>
                 </div>
-                <div className="p-4 bg-gray-900 rounded-lg border border-gray-800 hover:border-gray-700 transition-colors">
-                  <p className="text-sm text-gray-400">📤 Upload multiple files at once</p>
+                <div className="p-3 lg:p-4 bg-gray-900 rounded-lg border border-gray-800">
+                  <p className="text-xs lg:text-sm text-gray-400">📤 Upload multiple files</p>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="max-w-3xl mx-auto space-y-6">
+            <div className="max-w-3xl mx-auto space-y-4 lg:space-y-6">
               {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={`flex gap-4 ${
+                  className={`flex gap-3 lg:gap-4 ${
                     msg.role === 'user' ? 'justify-end' : 'justify-start'
                   } animate-fade-in`}
                 >
                   {msg.role === 'assistant' && (
-                    <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0">
-                      <Sparkles className="w-5 h-5 text-black" />
+                    <div className="w-7 h-7 lg:w-8 lg:h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0">
+                      <Sparkles className="w-4 h-4 lg:w-5 lg:h-5 text-black" />
                     </div>
                   )}
                   <div
-                    className={`max-w-[80%] rounded-2xl px-6 py-4 ${
+                    className={`max-w-[85%] lg:max-w-[80%] rounded-2xl px-4 py-3 lg:px-6 lg:py-4 ${
                       msg.role === 'user'
                         ? 'bg-white text-black'
                         : 'bg-gray-900 text-white border border-gray-800'
                     }`}
                   >
-                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    <p className="whitespace-pre-wrap leading-relaxed text-sm lg:text-base">{msg.content}</p>
                   </div>
                   {msg.role === 'user' && (
-                    <div className="w-8 h-8 bg-white text-black rounded-lg flex items-center justify-center font-bold flex-shrink-0">
+                    <div className="w-7 h-7 lg:w-8 lg:h-8 bg-white text-black rounded-lg flex items-center justify-center font-bold flex-shrink-0 text-sm">
                       {user?.email?.[0].toUpperCase()}
                     </div>
                   )}
@@ -565,21 +570,21 @@ export default function AIChatbot() {
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-gray-800 bg-black p-4">
+        <div className="border-t border-gray-800 bg-black p-3 lg:p-4">
           <div className="max-w-3xl mx-auto">
-            <form onSubmit={handleSendMessage} className="flex gap-3">
+            <form onSubmit={handleSendMessage} className="flex gap-2 lg:gap-3">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about your documents..."
-                className="flex-1 px-6 py-4 bg-gray-900 text-white border border-gray-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-600"
+                className="flex-1 px-4 lg:px-6 py-3 lg:py-4 bg-gray-900 text-white border border-gray-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-white placeholder-gray-600 text-sm lg:text-base"
                 disabled={loading}
               />
               <button
                 type="submit"
                 disabled={loading || !input.trim()}
-                className="px-6 py-4 bg-white text-black rounded-xl hover:bg-gray-200 disabled:bg-gray-800 disabled:text-gray-600 transition-all flex items-center gap-2 font-medium"
+                className="px-4 lg:px-6 py-3 lg:py-4 bg-white text-black rounded-xl hover:bg-gray-200 disabled:bg-gray-800 disabled:text-gray-600 transition-all flex items-center gap-2 font-medium"
               >
                 {loading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
