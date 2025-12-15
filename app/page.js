@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '../contexts/AuthContext'
-import { supabase } from '../lib/supabase'
+import { useAuth } from './contexts/AuthContext'
+import { supabase } from './lib/supabase'
 import React, { useState } from 'react'
 import { Upload, Send, FileText, Loader2, Trash2, Sparkles, Database, LogOut, Download, X, AlertCircle, CheckCircle, Menu } from 'lucide-react'
 
@@ -22,18 +22,15 @@ export default function AIChatbot() {
   const chatAreaRef = useRef(null)
   const messagesEndRef = useRef(null)
 
-  // Toast Notification
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type })
     setTimeout(() => setNotification(null), 4000)
   }
 
-  // Auto-scroll เมื่อมี Message ใหม่
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Fix viewport height on mobile
   useEffect(() => {
     const setVH = () => {
       const vh = window.innerHeight * 0.01
@@ -44,7 +41,6 @@ export default function AIChatbot() {
     window.addEventListener('resize', setVH)
     window.addEventListener('orientationchange', setVH)
     
-    // Listen for visual viewport changes (keyboard open/close)
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', setVH)
     }
@@ -58,7 +54,6 @@ export default function AIChatbot() {
     }
   }, [])
 
-  // โหลดไฟล์จาก Database
   const loadUserFiles = async () => {
     if (!user) return
     
@@ -100,12 +95,12 @@ export default function AIChatbot() {
     }
   }, [user, authLoading, router])
 
-  // อัปโหลดไฟล์ (Direct Upload)
+  // 🆕 ใช้ API แบบเดิม
   const uploadFiles = async (files) => {
     if (!files || files.length === 0) return
 
     const fileArray = Array.from(files)
-    const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
+    const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
     
     setLoading(true)
     
@@ -117,12 +112,14 @@ export default function AIChatbot() {
       }
 
       let successCount = 0
+      let failCount = 0
 
       for (let i = 0; i < fileArray.length; i++) {
         const file = fileArray[i]
         
         if (file.size > MAX_FILE_SIZE) {
-          showNotification(`${file.name} ใหญ่เกิน 50 MB`, 'error')
+          showNotification(`${file.name} ใหญ่เกิน 10 MB`, 'error')
+          failCount++
           continue
         }
         
@@ -132,93 +129,57 @@ export default function AIChatbot() {
         }])
 
         try {
-// 🆕 ทำความสะอาดชื่อไฟล์ (เอาภาษาไทยออก)
-const sanitizeFileName = (name) => {
-  // แยก extension
-  const lastDot = name.lastIndexOf('.')
-  const nameWithoutExt = lastDot !== -1 ? name.substring(0, lastDot) : name
-  const extension = lastDot !== -1 ? name.substring(lastDot) : ''
-  
-  // แปลงภาษาไทยเป็น ASCII หรือลบออก
-  const sanitized = nameWithoutExt
-    .normalize('NFD')
-    .replace(/[\u0E00-\u0E7F]/g, '') // ลบอักษรไทย
-    .replace(/[^\w\s-]/g, '') // ลบ special chars
-    .replace(/[\s_]+/g, '_') // เปลี่ยน space เป็น underscore
-    .replace(/^-+|-+$/g, '') // ลบ dash ต้นท้าย
-    .toLowerCase()
-  
-  // ถ้าชื่อว่างเปล่า (ไฟล์ชื่อเป็นภาษาไทยหมด) ให้ใช้ file เป็นชื่อ
-  return (sanitized || 'file') + extension
-}
+          const formData = new FormData()
+          formData.append('file', file)
 
-const timestamp = Date.now()
-const sanitizedName = sanitizeFileName(file.name)
-const fileName = `${timestamp}_${sanitizedName}`
-const filePath = `${user.id}/${fileName}`
+          console.log('📤 Uploading via API:', file.name)
 
-console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
+          const response = await fetch('/api/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`
+            },
+            body: formData
+          })
 
+          if (!response.ok) {
+            const error = await response.json()
+            throw new Error(error.error || 'Upload failed')
+          }
 
-          // อัปโหลดตรงไป Supabase Storage
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('documents')
-            .upload(filePath, file, {
-              cacheControl: '3600',
-              upsert: false
-            })
-
-          if (uploadError) throw uploadError
-
-          setUploadProgress(prev => prev.map(p => 
-            p.name === file.name ? { ...p, progress: 70 } : p
-          ))
-
-          const content = `📄 ไฟล์: ${file.name}\n📊 ขนาด: ${(file.size / 1024).toFixed(2)} KB\n📅 อัปโหลด: ${new Date().toLocaleString('th-TH')}`
-
-          // บันทึกข้อมูลลง Database
-          const { error: dbError } = await supabase
-            .from('files')
-            .insert([{
-              user_id: user.id,
-              name: file.name,
-              file_path: uploadData.path,
-              file_type: file.type,
-              file_size: file.size,
-              content: content
-            }])
-
-          if (dbError) throw dbError
+          const result = await response.json()
+          console.log('✅ Upload success:', result)
 
           setUploadProgress(prev => prev.map(p => 
             p.name === file.name ? { ...p, progress: 100 } : p
           ))
-          
           successCount++
 
         } catch (error) {
           console.error(`Upload error for ${file.name}:`, error)
           showNotification(`${file.name}: ${error.message}`, 'error')
           setUploadProgress(prev => prev.filter(p => p.name !== file.name))
+          failCount++
         }
       }
 
       if (successCount > 0) {
         await loadUserFiles()
-        showNotification(`✅ อัปโหลดสำเร็จ ${successCount} ไฟล์`, 'success')
+        showNotification(`✅ อัปโหลดสำเร็จ ${successCount}/${fileArray.length} ไฟล์`, 'success')
         setIsSidebarOpen(false)
+      } else if (failCount > 0) {
+        showNotification(`❌ อัปโหลดล้มเหลวทั้งหมด`, 'error')
       }
 
     } catch (error) {
       console.error('Upload error:', error)
-      showNotification('อัปโหลดล้มเหลว', 'error')
+      showNotification('อัปโหลดล้มเหลว: ' + error.message, 'error')
     } finally {
       setLoading(false)
       setTimeout(() => setUploadProgress([]), 1000)
     }
   }
 
-  // Drag & Drop
   const handleDragOver = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -244,7 +205,6 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
     }
   }
 
-  // Paste (Ctrl+V)
   useEffect(() => {
     const handlePaste = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
@@ -384,7 +344,6 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
 
   return (
     <div className="flex h-screen bg-black text-white overflow-hidden">
-      {/* Toast Notification */}
       {notification && (
         <div className={`fixed top-4 left-4 right-4 mx-auto z-[60] flex items-center gap-3 px-4 py-3 rounded-lg shadow-2xl border animate-fade-in max-w-md ${
           notification.type === 'success' ? 'bg-green-500/10 border-green-500/50 text-green-400' :
@@ -400,7 +359,6 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
         </div>
       )}
 
-      {/* Mobile Overlay */}
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
@@ -408,14 +366,12 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
         />
       )}
 
-      {/* Left Sidebar - Mobile Responsive */}
       <div className={`
         fixed lg:relative inset-y-0 left-0 z-50
         w-[85vw] sm:w-80 max-w-sm bg-black border-r border-gray-800 flex flex-col
         transform transition-transform duration-300 ease-in-out
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
-        {/* Mobile Close Button */}
         <button
           onClick={() => setIsSidebarOpen(false)}
           className="lg:hidden absolute top-4 right-4 p-2 text-gray-400 hover:text-white z-10"
@@ -445,7 +401,7 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
               multiple
             />
           </label>
-          <p className="text-xs text-gray-600 mt-2 text-center">Max 50 MB per file</p>
+          <p className="text-xs text-gray-600 mt-2 text-center">Max 10 MB per file</p>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -504,7 +460,6 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
         </div>
       </div>
 
-      {/* Main Chat Area */}
       <div 
         className="flex-1 flex flex-col bg-black relative w-full min-h-0"
         onDragOver={handleDragOver}
@@ -512,18 +467,16 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
         onDrop={handleDrop}
         ref={chatAreaRef}
       >
-        {/* Drag & Drop Overlay */}
         {isDragging && (
           <div className="absolute inset-0 bg-white/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-white/50 rounded-lg m-2">
             <div className="text-center px-4">
               <Upload className="w-16 h-16 text-white mx-auto mb-4 animate-bounce" />
               <p className="text-xl lg:text-2xl font-bold text-white">Drop files here</p>
-              <p className="text-gray-300 mt-2 text-sm">PDF, Word, Excel, Text (Max 50 MB)</p>
+              <p className="text-gray-300 mt-2 text-sm">PDF, Word, Excel, Text (Max 10 MB)</p>
             </div>
           </div>
         )}
 
-        {/* Upload Progress */}
         {uploadProgress.length > 0 && (
           <div className="absolute top-4 right-4 bg-gray-900 border border-gray-800 rounded-lg p-4 shadow-2xl z-40 min-w-[280px] max-w-[calc(100vw-2rem)]">
             <div className="flex items-center justify-between mb-3">
@@ -547,10 +500,8 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
           </div>
         )}
 
-        {/* Header */}
         <div className="bg-black border-b border-gray-800 px-4 lg:px-6 py-4 flex-shrink-0">
           <div className="flex items-center gap-3">
-            {/* Mobile Menu Button */}
             <button
               onClick={() => setIsSidebarOpen(true)}
               className="lg:hidden p-2 hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
@@ -568,7 +519,6 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
           </div>
         </div>
 
-        {/* Messages Area */}
         <div className="flex-1 min-h-0 overflow-y-auto p-4 lg:p-6">
           {messages.length === 0 ? (
             <div className="max-w-2xl mx-auto text-center py-8 lg:py-12 px-4">
@@ -628,7 +578,6 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
           )}
         </div>
 
-        {/* Input Area - Fixed at bottom */}
         <div className="flex-shrink-0 border-t border-gray-800 bg-black px-3 py-3 lg:px-4 lg:py-4 safe-bottom">
           <div className="max-w-3xl mx-auto">
             <form onSubmit={handleSendMessage} className="flex gap-2">
@@ -663,5 +612,3 @@ console.log('Original:', file.name, '→ Sanitized:', sanitizedName)
     </div>
   )
 }
-
-
