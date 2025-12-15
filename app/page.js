@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from './contexts/AuthContext'
-import { supabase } from './lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
 import React, { useState } from 'react'
 import { Upload, Send, FileText, Loader2, Trash2, Sparkles, Database, LogOut, Download, X, AlertCircle, CheckCircle, Menu } from 'lucide-react'
 
@@ -612,3 +612,4 @@ export default function AIChatbot() {
     </div>
   )
 }
+
