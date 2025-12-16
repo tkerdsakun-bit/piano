@@ -1,4 +1,4 @@
-oute_js_content = """import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { chatWithAI } from '../../../lib/gemini';
 
@@ -7,7 +7,6 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export async function POST(request) {
   try {
-    // Check for authorization token
     const authHeader = request.headers.get('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return NextResponse.json(
@@ -20,12 +19,11 @@ export async function POST(request) {
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: 'Bearer ' + token,
         },
       },
     });
 
-    // Get the authenticated user
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       console.error('Auth error:', authError);
@@ -35,10 +33,9 @@ export async function POST(request) {
       );
     }
 
-    // Get the message and BYOK flag from the request
     const body = await request.json();
     const { message, fileContents = [], useOwnKey = false } = body;
-    
+
     if (!message) {
       return NextResponse.json(
         { error: 'No message provided' },
@@ -46,10 +43,8 @@ export async function POST(request) {
       );
     }
 
-    // 🆕 Get user's API key if they're using their own
     const userApiKey = request.headers.get('X-User-API-Key');
-    
-    // Validate API key if user wants to use their own
+
     if (useOwnKey && !userApiKey) {
       return NextResponse.json(
         { error: 'API Key required when using your own key' },
@@ -57,11 +52,9 @@ export async function POST(request) {
       );
     }
 
-    console.log(`Processing message for user ${user.id}`);
-    console.log(`Using own key: ${useOwnKey}`);
-    console.log(`File contents count: ${fileContents.length}`);
+    console.log('Processing message for user ' + user.id);
+    console.log('Using own key: ' + useOwnKey);
 
-    // Call the chatWithAI function with optional user API key
     const response = await chatWithAI(message, fileContents, userApiKey || null);
 
     return NextResponse.json({
@@ -71,15 +64,14 @@ export async function POST(request) {
 
   } catch (error) {
     console.error('Chat error:', error);
-    
-    // Handle specific API key errors
+
     if (error.message.includes('401') || error.message.includes('Unauthorized')) {
       return NextResponse.json(
         { error: 'Invalid API Key. Please check your Hugging Face API key.' },
         { status: 401 }
       );
     }
-    
+
     return NextResponse.json(
       { error: error.message || 'Chat failed' },
       { status: 500 }
