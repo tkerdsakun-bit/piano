@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server';
+oute_js_content = """import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { chatWithAI } from '../../../lib/gemini';  // Importing the chatWithAI function from lib/gemini
+import { chatWithAI } from '../../../lib/gemini';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -17,7 +17,6 @@ export async function POST(request) {
     }
 
     const token = authHeader.replace('Bearer ', '');
-
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: {
         headers: {
@@ -28,7 +27,6 @@ export async function POST(request) {
 
     // Get the authenticated user
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-
     if (authError || !user) {
       console.error('Auth error:', authError);
       return NextResponse.json(
@@ -37,9 +35,10 @@ export async function POST(request) {
       );
     }
 
-    // Get the message from the request
-    const { message } = await request.json();
-
+    // Get the message and BYOK flag from the request
+    const body = await request.json();
+    const { message, fileContents = [], useOwnKey = false } = body;
+    
     if (!message) {
       return NextResponse.json(
         { error: 'No message provided' },
@@ -47,38 +46,40 @@ export async function POST(request) {
       );
     }
 
-    // Fetch files from Supabase (optional: if you want to include user-uploaded files)
-    const { data: files, error: filesError } = await supabase
-      .from('files')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (filesError) {
-      console.error('Files error:', filesError);
+    // 🆕 Get user's API key if they're using their own
+    const userApiKey = request.headers.get('X-User-API-Key');
+    
+    // Validate API key if user wants to use their own
+    if (useOwnKey && !userApiKey) {
       return NextResponse.json(
-        { error: `Failed to fetch files: ${filesError.message}` },
-        { status: 500 }
+        { error: 'API Key required when using your own key' },
+        { status: 400 }
       );
     }
 
-    // Map file contents to pass to the AI model
-    const fileContents = files.map((file) => ({
-      name: file.name,
-      content: file.content || '',
-    }));
+    console.log(`Processing message for user ${user.id}`);
+    console.log(`Using own key: ${useOwnKey}`);
+    console.log(`File contents count: ${fileContents.length}`);
 
-    console.log(`Processing ${files.length} files for user ${user.id}`);
-
-    // Call the chatWithAI function to generate a response using OpenAI
-    const response = await chatWithAI(message, fileContents);
+    // Call the chatWithAI function with optional user API key
+    const response = await chatWithAI(message, fileContents, userApiKey || null);
 
     return NextResponse.json({
       success: true,
       response: response,
     });
+
   } catch (error) {
     console.error('Chat error:', error);
+    
+    // Handle specific API key errors
+    if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+      return NextResponse.json(
+        { error: 'Invalid API Key. Please check your Hugging Face API key.' },
+        { status: 401 }
+      );
+    }
+    
     return NextResponse.json(
       { error: error.message || 'Chat failed' },
       { status: 500 }
