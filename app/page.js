@@ -5,12 +5,12 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import React, { useState } from 'react'
-import { Upload, Send, FileText, Loader2, Trash2, Sparkles, Database, LogOut, Download, X, AlertCircle, CheckCircle, Menu } from 'lucide-react'
+import { Upload, Send, FileText, Loader2, Trash2, Sparkles, Database, LogOut, Download, X, AlertCircle, CheckCircle, Menu, Key, Settings } from 'lucide-react'
 
 export default function AIChatbot() {
   const { user, loading: authLoading, signOut } = useAuth()
   const router = useRouter()
-  
+
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -19,6 +19,14 @@ export default function AIChatbot() {
   const [uploadProgress, setUploadProgress] = useState([])
   const [notification, setNotification] = useState(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+
+  // BYOK States
+  const [userApiKey, setUserApiKey] = useState('')
+  const [useOwnKey, setUseOwnKey] = useState(false)
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+  const [apiKeyInputTemp, setApiKeyInputTemp] = useState('')
+  const [selectedProvider, setSelectedProvider] = useState('huggingface')
+
   const chatAreaRef = useRef(null)
   const messagesEndRef = useRef(null)
 
@@ -34,17 +42,17 @@ export default function AIChatbot() {
   useEffect(() => {
     const setVH = () => {
       const vh = window.innerHeight * 0.01
-      document.documentElement.style.setProperty('--vh', `${vh}px`)
+      document.documentElement.style.setProperty('--vh', vh + 'px')
     }
-    
+
     setVH()
     window.addEventListener('resize', setVH)
     window.addEventListener('orientationchange', setVH)
-    
+
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', setVH)
     }
-    
+
     return () => {
       window.removeEventListener('resize', setVH)
       window.removeEventListener('orientationchange', setVH)
@@ -54,28 +62,92 @@ export default function AIChatbot() {
     }
   }, [])
 
+  // Load API Key from localStorage
+  useEffect(() => {
+    if (user) {
+      const savedKey = localStorage.getItem('ai_api_key_' + user.id)
+      const savedProvider = localStorage.getItem('ai_provider_' + user.id)
+      const savedPref = localStorage.getItem('use_own_key_' + user.id)
+
+      if (savedKey) {
+        setUserApiKey(savedKey)
+        setApiKeyInputTemp(savedKey)
+      }
+      if (savedProvider) {
+        setSelectedProvider(savedProvider)
+      }
+      if (savedPref === 'true') {
+        setUseOwnKey(true)
+      }
+    }
+  }, [user])
+
+  const saveApiKey = () => {
+    if (!apiKeyInputTemp.trim()) {
+      showNotification('กรุณากรอก API Key', 'error')
+      return
+    }
+    if (apiKeyInputTemp.length < 20) {
+      showNotification('API Key ไม่ถูกต้อง', 'error')
+      return
+    }
+
+    localStorage.setItem('ai_api_key_' + user.id, apiKeyInputTemp.trim())
+    localStorage.setItem('ai_provider_' + user.id, selectedProvider)
+    localStorage.setItem('use_own_key_' + user.id, 'true')
+    setUserApiKey(apiKeyInputTemp.trim())
+    setUseOwnKey(true)
+    setShowApiKeyModal(false)
+    showNotification('✅ บันทึก API Key สำเร็จ!', 'success')
+  }
+
+  const clearApiKey = () => {
+    localStorage.removeItem('ai_api_key_' + user.id)
+    localStorage.removeItem('ai_provider_' + user.id)
+    localStorage.removeItem('use_own_key_' + user.id)
+    setUserApiKey('')
+    setApiKeyInputTemp('')
+    setUseOwnKey(false)
+    setShowApiKeyModal(false)
+    showNotification('ลบ API Key แล้ว', 'info')
+  }
+
+  const toggleUseOwnKey = () => {
+    if (!useOwnKey && !userApiKey) {
+      setShowApiKeyModal(true)
+      return
+    }
+    const newValue = !useOwnKey
+    setUseOwnKey(newValue)
+    localStorage.setItem('use_own_key_' + user.id, newValue.toString())
+    showNotification(
+      newValue ? '✅ ใช้ API Key ของคุณ' : 'ใช้ API Key ของระบบ',
+      'success'
+    )
+  }
+
   const loadUserFiles = async () => {
     if (!user) return
-    
+
     try {
       const { data, error } = await supabase
         .from('files')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-      
+
       if (error) throw error
-      
+
       const formattedFiles = data.map(file => ({
         id: file.id,
         name: file.name,
-        size: `${(file.file_size / 1024).toFixed(2)} KB`,
+        size: (file.file_size / 1024).toFixed(2) + ' KB',
         uploadedAt: new Date(file.created_at).toLocaleString(),
         file_path: file.file_path,
         file_type: file.file_type,
         content: file.content
       }))
-      
+
       setUploadedFiles(formattedFiles)
     } catch (error) {
       console.error('Error loading files:', error)
@@ -95,15 +167,14 @@ export default function AIChatbot() {
     }
   }, [user, authLoading, router])
 
-  // 🆕 ใช้ API แบบเดิม
   const uploadFiles = async (files) => {
     if (!files || files.length === 0) return
 
     const fileArray = Array.from(files)
-    const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
-    
+    const MAX_FILE_SIZE = 10 * 1024 * 1024
+
     setLoading(true)
-    
+
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
@@ -116,13 +187,13 @@ export default function AIChatbot() {
 
       for (let i = 0; i < fileArray.length; i++) {
         const file = fileArray[i]
-        
+
         if (file.size > MAX_FILE_SIZE) {
-          showNotification(`${file.name} ใหญ่เกิน 10 MB`, 'error')
+          showNotification(file.name + ' ใหญ่เกิน 10 MB', 'error')
           failCount++
           continue
         }
-        
+
         setUploadProgress(prev => [...prev, {
           name: file.name,
           progress: 0
@@ -132,12 +203,10 @@ export default function AIChatbot() {
           const formData = new FormData()
           formData.append('file', file)
 
-          console.log('📤 Uploading via API:', file.name)
-
           const response = await fetch('/api/upload', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${session.access_token}`
+              'Authorization': 'Bearer ' + session.access_token
             },
             body: formData
           })
@@ -147,17 +216,14 @@ export default function AIChatbot() {
             throw new Error(error.error || 'Upload failed')
           }
 
-          const result = await response.json()
-          console.log('✅ Upload success:', result)
-
           setUploadProgress(prev => prev.map(p => 
             p.name === file.name ? { ...p, progress: 100 } : p
           ))
           successCount++
 
         } catch (error) {
-          console.error(`Upload error for ${file.name}:`, error)
-          showNotification(`${file.name}: ${error.message}`, 'error')
+          console.error('Upload error for ' + file.name + ':', error)
+          showNotification(file.name + ': ' + error.message, 'error')
           setUploadProgress(prev => prev.filter(p => p.name !== file.name))
           failCount++
         }
@@ -165,10 +231,8 @@ export default function AIChatbot() {
 
       if (successCount > 0) {
         await loadUserFiles()
-        showNotification(`✅ อัปโหลดสำเร็จ ${successCount}/${fileArray.length} ไฟล์`, 'success')
+        showNotification('✅ อัปโหลดสำเร็จ ' + successCount + '/' + fileArray.length + ' ไฟล์', 'success')
         setIsSidebarOpen(false)
-      } else if (failCount > 0) {
-        showNotification(`❌ อัปโหลดล้มเหลวทั้งหมด`, 'error')
       }
 
     } catch (error) {
@@ -242,16 +306,16 @@ export default function AIChatbot() {
       const { data, error } = await supabase.storage
         .from('documents')
         .createSignedUrl(file.file_path, 60)
-      
+
       if (error) throw error
-      
+
       const link = document.createElement('a')
       link.href = data.signedUrl
       link.download = file.name
       link.click()
-      
-      showNotification(`กำลังดาวน์โหลด ${file.name}`, 'success')
-      
+
+      showNotification('กำลังดาวน์โหลด ' + file.name, 'success')
+
     } catch (error) {
       console.error('Download error:', error)
       showNotification('ดาวน์โหลดไม่สำเร็จ', 'error')
@@ -259,7 +323,7 @@ export default function AIChatbot() {
   }
 
   const handleDeleteFile = async (file) => {
-    if (!confirm(`ต้องการลบ ${file.name} ใช่หรือไม่?`)) return
+    if (!confirm('ต้องการลบ ' + file.name + ' ใช่หรือไม่?')) return
 
     try {
       setLoading(true)
@@ -279,7 +343,7 @@ export default function AIChatbot() {
       if (dbError) throw dbError
 
       await loadUserFiles()
-      showNotification(`ลบ ${file.name} สำเร็จ`, 'success')
+      showNotification('ลบ ' + file.name + ' สำเร็จ', 'success')
 
     } catch (error) {
       console.error('Delete error:', error)
@@ -300,33 +364,54 @@ export default function AIChatbot() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      
+
       const fileContents = uploadedFiles.map(f => ({
         name: f.name,
         content: f.content
       }))
 
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      }
+
+      // Add user API key if using their own
+      if (useOwnKey && userApiKey) {
+        headers['X-User-API-Key'] = userApiKey
+        headers['X-AI-Provider'] = selectedProvider
+      }
+
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
+        headers: headers,
         body: JSON.stringify({
           message: userMessage,
-          fileContents
+          fileContents,
+          useOwnKey: useOwnKey && !!userApiKey,
+          provider: selectedProvider
         })
       })
 
-      if (!response.ok) throw new Error('Failed to get response')
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to get response')
+      }
 
       const data = await response.json()
       setMessages(prev => [...prev, { role: 'assistant', content: data.response }])
+
     } catch (error) {
       console.error('Chat error:', error)
+      let errorMessage = 'ขออภัย เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง'
+
+      if (error.message.includes('API key') || error.message.includes('Invalid')) {
+        errorMessage = '❌ API Key ไม่ถูกต้อง กรุณาตรวจสอบ API Key ของคุณ'
+        setShowApiKeyModal(true)
+      }
+
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: 'ขออภัย เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง' 
+        content: errorMessage
       }])
       showNotification('ส่งข้อความไม่สำเร็จ', 'error')
     } finally {
@@ -344,12 +429,106 @@ export default function AIChatbot() {
 
   return (
     <div className="flex h-screen bg-black text-white overflow-hidden">
+      {/* API Key Modal */}
+      {showApiKeyModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full p-6 relative border border-gray-800">
+            <button
+              onClick={() => setShowApiKeyModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-white rounded-full">
+                <Key className="w-6 h-6 text-black" />
+              </div>
+              <h2 className="text-xl font-bold text-white">API Key Settings</h2>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Select AI Provider
+                </label>
+                <select
+                  value={selectedProvider}
+                  onChange={(e) => setSelectedProvider(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-800 text-white border border-gray-700 rounded-xl focus:ring-2 focus:ring-white focus:border-transparent"
+                >
+                  <option value="huggingface">HuggingFace (Qwen)</option>
+                  <option value="openai">OpenAI (GPT-3.5)</option>
+                  <option value="gemini">Google Gemini</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  API Key
+                </label>
+                <input
+                  type="password"
+                  value={apiKeyInputTemp}
+                  onChange={(e) => setApiKeyInputTemp(e.target.value)}
+                  placeholder={
+                    selectedProvider === 'openai' ? 'sk-...' :
+                    selectedProvider === 'gemini' ? 'AIza...' :
+                    'hf_...'
+                  }
+                  className="w-full px-4 py-3 bg-gray-800 text-white border border-gray-700 rounded-xl focus:ring-2 focus:ring-white focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  🔒 API Key stored in your browser only
+                </p>
+              </div>
+
+              <div className="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <p className="text-sm text-gray-300 mb-2 font-medium">
+                  Where to get API keys:
+                </p>
+                {selectedProvider === 'openai' && (
+                  <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 underline block">
+                    platform.openai.com/api-keys
+                  </a>
+                )}
+                {selectedProvider === 'gemini' && (
+                  <a href="https://makersuite.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 underline block">
+                    makersuite.google.com/app/apikey
+                  </a>
+                )}
+                {selectedProvider === 'huggingface' && (
+                  <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 underline block">
+                    huggingface.co/settings/tokens
+                  </a>
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={clearApiKey}
+                  className="flex-1 px-4 py-3 bg-gray-800 text-white rounded-xl hover:bg-gray-700 font-medium transition-colors border border-gray-700"
+                >
+                  Clear Key
+                </button>
+                <button
+                  onClick={saveApiKey}
+                  className="flex-1 px-4 py-3 bg-white text-black rounded-xl hover:bg-gray-200 font-medium transition-all"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {notification && (
-        <div className={`fixed top-4 left-4 right-4 mx-auto z-[60] flex items-center gap-3 px-4 py-3 rounded-lg shadow-2xl border animate-fade-in max-w-md ${
+        <div className={'fixed top-4 left-4 right-4 mx-auto z-[60] flex items-center gap-3 px-4 py-3 rounded-lg shadow-2xl border animate-fade-in max-w-md ' + (
           notification.type === 'success' ? 'bg-green-500/10 border-green-500/50 text-green-400' :
           notification.type === 'error' ? 'bg-red-500/10 border-red-500/50 text-red-400' :
           'bg-blue-500/10 border-blue-500/50 text-blue-400'
-        }`}>
+        )}>
           {notification.type === 'success' && <CheckCircle className="w-5 h-5 flex-shrink-0" />}
           {notification.type === 'error' && <AlertCircle className="w-5 h-5 flex-shrink-0" />}
           <span className="font-medium text-sm flex-1">{notification.message}</span>
@@ -366,12 +545,7 @@ export default function AIChatbot() {
         />
       )}
 
-      <div className={`
-        fixed lg:relative inset-y-0 left-0 z-50
-        w-[85vw] sm:w-80 max-w-sm bg-black border-r border-gray-800 flex flex-col
-        transform transition-transform duration-300 ease-in-out
-        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-      `}>
+      <div className={'fixed lg:relative inset-y-0 left-0 z-50 w-[85vw] sm:w-80 max-w-sm bg-black border-r border-gray-800 flex flex-col transform transition-transform duration-300 ease-in-out ' + (isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0')}>
         <button
           onClick={() => setIsSidebarOpen(false)}
           className="lg:hidden absolute top-4 right-4 p-2 text-gray-400 hover:text-white z-10"
@@ -389,7 +563,32 @@ export default function AIChatbot() {
               {uploadedFiles.length} files
             </span>
           </div>
-          
+
+          {/* API Key Status Toggle */}
+          <div className="mb-4 p-3 bg-gray-900 rounded-lg border border-gray-800">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400 font-medium">Use My API Key</span>
+              <button
+                onClick={toggleUseOwnKey}
+                className={'relative inline-flex h-6 w-11 items-center rounded-full transition-colors ' + (useOwnKey ? 'bg-green-500' : 'bg-gray-700')}
+              >
+                <span className={'inline-block h-4 w-4 transform rounded-full bg-white transition-transform ' + (useOwnKey ? 'translate-x-6' : 'translate-x-1')} />
+              </button>
+            </div>
+            <button
+              onClick={() => setShowApiKeyModal(true)}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-white text-xs font-medium transition-all border border-gray-700"
+            >
+              <Settings className="w-3 h-3" />
+              {userApiKey ? 'Edit Settings' : 'Setup API Key'}
+            </button>
+            {useOwnKey && userApiKey && (
+              <p className="text-xs text-green-400 mt-2 text-center">
+                ✓ Using {selectedProvider}
+              </p>
+            )}
+          </div>
+
           <label className="flex items-center justify-center gap-2 px-4 py-3 bg-white text-black rounded-lg hover:bg-gray-200 transition-all cursor-pointer font-medium">
             <Upload className="w-4 h-4" />
             Upload
@@ -420,7 +619,7 @@ export default function AIChatbot() {
                     <div className="font-medium text-white truncate text-sm">{file.name}</div>
                     <div className="text-xs text-gray-400">{file.size}</div>
                   </div>
-                  
+
                   <button
                     onClick={() => handleDownloadFile(file)}
                     className="p-2 text-blue-400 hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
@@ -428,7 +627,7 @@ export default function AIChatbot() {
                   >
                     <Download className="w-4 h-4" />
                   </button>
-                  
+
                   <button
                     onClick={() => handleDeleteFile(file)}
                     className="p-2 text-red-500 hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
@@ -492,7 +691,7 @@ export default function AIChatbot() {
                 <div className="w-full bg-gray-800 rounded-full h-2">
                   <div 
                     className="bg-white h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${file.progress}%` }}
+                    style={{ width: file.progress + '%' }}
                   ></div>
                 </div>
               </div>
@@ -514,7 +713,12 @@ export default function AIChatbot() {
             </div>
             <div className="flex-1 min-w-0 overflow-hidden">
               <h1 className="text-lg lg:text-xl font-bold text-white truncate">AI Assistant</h1>
-              <p className="text-xs lg:text-sm text-gray-500 truncate">Ask anything about your files</p>
+              <p className="text-xs lg:text-sm text-gray-500 truncate">
+                {useOwnKey && userApiKey 
+                  ? '🔑 Using your ' + selectedProvider + ' key'
+                  : '🤖 Using system API'
+                }
+              </p>
             </div>
           </div>
         </div>
@@ -548,9 +752,9 @@ export default function AIChatbot() {
               {messages.map((msg, index) => (
                 <div
                   key={index}
-                  className={`flex gap-3 lg:gap-4 ${
+                  className={'flex gap-3 lg:gap-4 ' + (
                     msg.role === 'user' ? 'justify-end' : 'justify-start'
-                  } animate-fade-in`}
+                  ) + ' animate-fade-in'}
                 >
                   {msg.role === 'assistant' && (
                     <div className="w-7 h-7 lg:w-8 lg:h-8 bg-white rounded-lg flex items-center justify-center flex-shrink-0">
@@ -558,11 +762,11 @@ export default function AIChatbot() {
                     </div>
                   )}
                   <div
-                    className={`max-w-[90%] sm:max-w-[85%] lg:max-w-[80%] rounded-2xl px-4 py-3 lg:px-6 lg:py-4 ${
+                    className={'max-w-[90%] sm:max-w-[85%] lg:max-w-[80%] rounded-2xl px-4 py-3 lg:px-6 lg:py-4 ' + (
                       msg.role === 'user'
                         ? 'bg-white text-black'
                         : 'bg-gray-900 text-white border border-gray-800'
-                    }`}
+                    )}
                   >
                     <p className="whitespace-pre-wrap leading-relaxed text-sm lg:text-base break-words">{msg.content}</p>
                   </div>
