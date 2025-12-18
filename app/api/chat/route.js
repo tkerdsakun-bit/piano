@@ -38,7 +38,8 @@ export async function POST(request) {
       message,
       fileContents = [],
       useOwnKey = false,
-      provider = 'huggingface',
+      provider = 'perplexity',
+      model = null,  // ⭐ ADD THIS
     } = body
 
     if (!message) {
@@ -50,6 +51,7 @@ export async function POST(request) {
 
     const userApiKey = request.headers.get('X-User-API-Key')
     const userProvider = request.headers.get('X-AI-Provider') || provider
+    const userModel = request.headers.get('X-AI-Model') || model  // ⭐ ADD THIS
 
     if (useOwnKey && !userApiKey) {
       return NextResponse.json(
@@ -61,22 +63,22 @@ export async function POST(request) {
     console.log('Processing message for user ' + user.id)
     console.log('Using own key: ' + useOwnKey)
     console.log('Provider: ' + userProvider)
+    console.log('Model: ' + userModel)  // ⭐ ADD THIS
 
     const response = await chatWithAI(
       message,
       fileContents,
       userApiKey || null,
-      userProvider
+      userProvider,
+      userModel  // ⭐ ADD THIS - pass model parameter
     )
 
     return NextResponse.json({
       success: true,
       response: response,
     })
-
   } catch (error) {
     console.error('Chat error:', error)
-
     if (
       error.message.includes('401') ||
       error.message.toLowerCase().includes('unauthorized') ||
@@ -94,4 +96,3 @@ export async function POST(request) {
     )
   }
 }
-
