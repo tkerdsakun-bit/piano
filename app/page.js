@@ -921,7 +921,7 @@ export default function AIChatbot() {
         </div>
       )}
 
-      <style jsx global>{\`
+      <style jsx global>{`
         @keyframes slide-in-right {
           from {
             transform: translateX(100%);
@@ -964,7 +964,7 @@ export default function AIChatbot() {
         .scrollbar-track-transparent::-webkit-scrollbar-track {
           background-color: transparent;
         }
-      \`}</style>
+      `}</style>
     </div>
   )
 }
