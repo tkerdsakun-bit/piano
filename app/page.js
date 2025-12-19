@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from './contexts/AuthContext'
-import { supabase } from './lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
 import { Upload, Send, FileText, Loader2, Trash2, LogOut, X, Power, Cloud, Settings } from 'lucide-react'
 
 const PROVIDERS = {
