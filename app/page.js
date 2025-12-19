@@ -227,7 +227,7 @@ export default function AIChatbot() {
           formData.append('file', file)
           const res = await fetch('/api/upload', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${session.access_token}` },
+            headers: { 'Authorization': 'Bearer ' + session.access_token },
             body: formData
           })
           if (!res.ok) throw new Error('Upload failed')
