@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '../contexts/AuthContext'
-import { supabase } from '../lib/supabase'
+import { useAuth } from './contexts/AuthContext'
+import { supabase } from './lib/supabase'
 import { Upload, Send, FileText, Loader2, Trash2, LogOut, X, Power, Cloud, Settings } from 'lucide-react'
 
 const PROVIDERS = {
@@ -348,7 +348,6 @@ export default function AIChatbot() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Notification */}
       {notification && (
         <div className="fixed top-4 right-4 z-50 animate-slide-in">
           <div className={"neon-border rounded-xl px-4 py-2 backdrop-blur-xl " + (
@@ -361,7 +360,6 @@ export default function AIChatbot() {
         </div>
       )}
 
-      {/* Drag Overlay */}
       {isDragging && (
         <div className="fixed inset-0 bg-black/90 z-40 flex items-center justify-center">
           <div className="neon-box p-8 rounded-2xl">
@@ -371,7 +369,6 @@ export default function AIChatbot() {
         </div>
       )}
 
-      {/* Header */}
       <div className="border-b border-gray-900 p-3 backdrop-blur-xl bg-black/50">
         <div className="flex items-center justify-between gap-2">
           <div className="flex-1 min-w-0">
@@ -380,7 +377,6 @@ export default function AIChatbot() {
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Provider */}
             <select
               value={selectedProvider}
               onChange={(e) => changeProvider(e.target.value)}
@@ -391,7 +387,6 @@ export default function AIChatbot() {
               ))}
             </select>
 
-            {/* Model */}
             {availableModels.length > 0 && (
               <select
                 value={selectedModel}
@@ -404,7 +399,6 @@ export default function AIChatbot() {
               </select>
             )}
 
-            {/* Toggle */}
             <button
               onClick={toggleKey}
               disabled={!userApiKey}
@@ -414,7 +408,6 @@ export default function AIChatbot() {
               <Power className="w-3.5 h-3.5" />
             </button>
 
-            {/* Files */}
             <button
               onClick={() => setShowFiles(true)}
               className="neon-btn p-1.5 rounded-lg relative"
@@ -427,7 +420,6 @@ export default function AIChatbot() {
               )}
             </button>
 
-            {/* Drive */}
             <button
               onClick={() => setShowDrive(true)}
               className={"neon-btn p-1.5 rounded-lg " + (driveConnected ? 'active' : '')}
@@ -435,7 +427,6 @@ export default function AIChatbot() {
               <Cloud className="w-4 h-4" />
             </button>
 
-            {/* Settings */}
             <button
               onClick={() => setShowSettings(true)}
               className="neon-btn p-1.5 rounded-lg"
@@ -443,7 +434,6 @@ export default function AIChatbot() {
               <Settings className="w-4 h-4" />
             </button>
 
-            {/* Logout */}
             <button
               onClick={signOut}
               className="neon-btn p-1.5 rounded-lg hover:border-red-400"
@@ -454,7 +444,6 @@ export default function AIChatbot() {
         </div>
       </div>
 
-      {/* Chat */}
       <div className="flex-1 overflow-y-auto p-4 custom-scroll">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
@@ -489,7 +478,6 @@ export default function AIChatbot() {
         )}
       </div>
 
-      {/* Input */}
       <div className="p-3 border-t border-gray-900 backdrop-blur-xl bg-black/50">
         <form onSubmit={sendMessage} className="flex gap-2">
           <input
@@ -510,7 +498,6 @@ export default function AIChatbot() {
         </form>
       </div>
 
-      {/* Files Panel */}
       {showFiles && (
         <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 backdrop-blur-xl animate-fade-in">
           <div className="neon-panel w-full max-w-md max-h-[85vh] overflow-hidden rounded-2xl">
@@ -567,7 +554,6 @@ export default function AIChatbot() {
         </div>
       )}
 
-      {/* Drive Panel */}
       {showDrive && (
         <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 backdrop-blur-xl animate-fade-in">
           <div className="neon-panel w-full max-w-md max-h-[85vh] overflow-hidden rounded-2xl">
@@ -656,7 +642,6 @@ export default function AIChatbot() {
         </div>
       )}
 
-      {/* Settings Panel */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 backdrop-blur-xl animate-fade-in">
           <div className="neon-panel w-full max-w-md rounded-2xl">
@@ -699,7 +684,7 @@ export default function AIChatbot() {
             </div>
           </div>
         </div>
-      )
+      )}
+    </div>
+  )
 }
-
-      
