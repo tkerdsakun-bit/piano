@@ -1,5 +1,5 @@
 // app/api/chat/route.js
-// ✅ FIXED - Completely removed Google Drive OAuth processing
+// ✅ FINAL VERSION - NO GOOGLE DRIVE OAUTH
 
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
@@ -69,7 +69,6 @@ export async function POST(request) {
     console.log('Model: ' + userModel)
     console.log('Total files: ' + fileContents.length)
 
-    // ✅ Call AI directly with file contents (no Drive OAuth processing)
     const response = await chatWithAI(
       message,
       fileContents,
