@@ -32,7 +32,7 @@ export default function AIChatbot() {
   const [useOwnKey, setUseOwnKey] = useState(false)
   const [apiKeyTemp, setApiKeyTemp] = useState('')
   const [selectedProvider, setSelectedProvider] = useState('perplexity')
-  const [selectedModel, setSelectedModel] = useState('sonar-reasoning-pro')
+  const [selectedModel, setSelectedModel] = useState('sonar-pro')
   const [driveLink, setDriveLink] = useState('')
   const [loadingLink, setLoadingLink] = useState(false)
   const [driveLinkFiles, setDriveLinkFiles] = useState([])
