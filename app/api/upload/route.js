@@ -35,6 +35,7 @@ export async function POST(request) {
 
     const formData = await request.formData()
     const file = formData.get('file')
+    const scope = formData.get('scope') || 'user' // 'chat', 'user', or 'global'
 
     if (!file) {
       return NextResponse.json(
@@ -43,29 +44,37 @@ export async function POST(request) {
       )
     }
 
-    console.log('📤 Uploading:', file.name, file.size, 'bytes')
+    console.log('📤 Uploading:', file.name, file.size, 'bytes', '| Scope:', scope)
 
-    // สร้างชื่อไฟล์ที่ปลอดภัย (ไม่มีภาษาไทย)
+    // Generate safe filename
     const timestamp = Date.now()
     const randomStr = Math.random().toString(36).substring(2, 8)
     const extension = file.name.substring(file.name.lastIndexOf('.')) || ''
     const safeFileName = `${timestamp}_${randomStr}${extension.toLowerCase()}`
-    const filePath = `${user.id}/${safeFileName}`
+    
+    // Different path structure based on scope
+    let filePath
+    if (scope === 'global') {
+      filePath = `global/${safeFileName}`
+    } else {
+      filePath = `${user.id}/${safeFileName}`
+    }
 
     console.log('📝 Original name:', file.name)
     console.log('📝 Safe name:', safeFileName)
+    console.log('📁 Path:', filePath)
 
-    // แปลงไฟล์เป็น Text
+    // Parse file content
     let content = ''
     try {
       content = await parseFile(file, file.type)
       console.log('✅ Parsed:', content.length, 'characters')
     } catch (parseError) {
       console.error('Parse error:', parseError)
-      content = `📄 ไฟล์: ${file.name}\n❌ ไม่สามารถแปลงเนื้อหาได้: ${parseError.message}`
+      content = `📄 File: ${file.name}\n❌ Could not parse content: ${parseError.message}`
     }
 
-    // อัปโหลดไป Supabase Storage
+    // Upload to Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('documents')
       .upload(filePath, file, {
@@ -83,16 +92,17 @@ export async function POST(request) {
 
     console.log('✅ Uploaded to storage:', uploadData.path)
 
-    // บันทึกข้อมูลลง Database (เก็บชื่อไทยไว้)
+    // Save to database with scope
     const { data: savedFile, error: dbError } = await supabase
       .from('files')
       .insert([{
         user_id: user.id,
-        name: file.name, // ← เก็บชื่อไทย
+        name: file.name,
         file_path: uploadData.path,
         file_type: file.type,
         file_size: file.size,
-        content: content
+        content: content,
+        scope: scope // NEW: Store scope
       }])
       .select()
       .single()
@@ -105,7 +115,7 @@ export async function POST(request) {
       )
     }
 
-    console.log('✅ Saved to database:', savedFile.id)
+    console.log('✅ Saved to database:', savedFile.id, '| Scope:', scope)
 
     return NextResponse.json({
       success: true,
@@ -114,6 +124,7 @@ export async function POST(request) {
         name: savedFile.name,
         size: `${(savedFile.file_size / 1024).toFixed(2)} KB`,
         type: savedFile.file_type,
+        scope: savedFile.scope,
         uploadedAt: new Date(savedFile.created_at).toLocaleString()
       }
     })
