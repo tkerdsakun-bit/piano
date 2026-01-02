@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { Menu, FileText, Loader2, Upload, Trash2, X, Settings, Plus, MessageSquare, LogOut, User, Key, Cloud, Download } from 'lucide-react'
+import { Menu, FileText, Loader2, Upload, Trash2, X, Settings, Plus, MessageSquare, LogOut, User, Key, Cloud, Download, ChevronDown, Database, MessageCircle, Globe } from 'lucide-react'
 
 const PROVIDERS = {
   perplexity: { name: 'Perplexity', icon: '🔮' },
@@ -12,6 +12,12 @@ const PROVIDERS = {
   gemini: { name: 'Gemini', icon: '✨' },
   huggingface: { name: 'HF', icon: '🤗' },
   deepseek: { name: 'DeepSeek', icon: '🧠' }
+}
+
+const FILE_SCOPES = {
+  chat: { label: 'Chat Only', icon: MessageCircle, color: 'purple', desc: 'Temporary - Lost on refresh' },
+  user: { label: 'My Database', icon: Database, color: 'blue', desc: 'Saved to your account' },
+  global: { label: 'Global', icon: Globe, color: 'green', desc: 'Shared with all users' }
 }
 
 export default function ChatPage() {
@@ -23,19 +29,18 @@ export default function ChatPage() {
   const [chats, setChats] = useState([])
   const [loading, setLoading] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [showFiles, setShowFiles] = useState(false)
+  const [showFilesDropdown, setShowFilesDropdown] = useState(false)
   const [showDrive, setShowDrive] = useState(false)
   const [settingsTab, setSettingsTab] = useState('account')
   
-  // File uploads
-  const [uploadedFiles, setUploadedFiles] = useState([])
+  // NEW: Separate file storage by scope
+  const [chatFiles, setChatFiles] = useState([]) // Temporary (lost on refresh)
+  const [userFiles, setUserFiles] = useState([]) // Persistent per user
+  const [globalFiles, setGlobalFiles] = useState([]) // Shared across all users
+  
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
-  
-  // NEW: File management states
-  const [useAllFiles, setUseAllFiles] = useState(true)
-  const [fileEnabledState, setFileEnabledState] = useState({})
-  const [fileScopeState, setFileScopeState] = useState({}) // 'global' | 'chat' | 'library'
+  const dropdownRef = useRef(null)
   
   // AI Provider/Model
   const [selectedProvider, setSelectedProvider] = useState('perplexity')
@@ -72,40 +77,53 @@ export default function ChatPage() {
   // Initialize
   useEffect(() => {
     if (user) {
-      // Load saved settings
       const savedKey = localStorage.getItem('key_' + user.id)
       const savedProvider = localStorage.getItem('provider_' + user.id)
       const savedModel = localStorage.getItem('model_' + user.id)
       const savedPref = localStorage.getItem('own_' + user.id)
-      
-      // NEW: Load file settings
-      const savedUseAll = localStorage.getItem('useAllFiles_' + user.id)
-      const savedFileEnabled = localStorage.getItem('fileEnabled_' + user.id)
-      const savedFileScope = localStorage.getItem('fileScope_' + user.id)
       
       if (savedKey) setUserApiKey(savedKey)
       if (savedProvider) setSelectedProvider(savedProvider)
       if (savedModel) setSelectedModel(savedModel)
       if (savedPref === 'true') setUseOwnKey(true)
       
-      if (savedUseAll !== null) setUseAllFiles(savedUseAll === 'true')
-      if (savedFileEnabled) setFileEnabledState(JSON.parse(savedFileEnabled))
-      if (savedFileScope) setFileScopeState(JSON.parse(savedFileScope))
-      
-      // Load files and chats
       loadUserFiles()
+      loadGlobalFiles()
       loadChatsFromStorage(user.id)
       fetchModels(savedProvider || 'perplexity')
     }
   }, [user])
 
-  // Initialize first chat
+  // Load chats and restore chat files from saved state
+  useEffect(() => {
+    if (user && currentChatId && chats.length > 0) {
+      const currentChat = chats.find(c => c.id === currentChatId)
+      if (currentChat?.chatFiles) {
+        setChatFiles(currentChat.chatFiles)
+      } else {
+        setChatFiles([])
+      }
+    }
+  }, [currentChatId, chats, user])
+
+  // Save chat files to chat state
+  useEffect(() => {
+    if (user && currentChatId && chatFiles.length >= 0) {
+      setChats(prev => prev.map(chat => 
+        chat.id === currentChatId 
+          ? { ...chat, chatFiles: chatFiles }
+          : chat
+      ))
+    }
+  }, [chatFiles, currentChatId, user])
+
   useEffect(() => {
     if (user && chats.length === 0) {
       const initialChat = {
         id: Date.now().toString(),
         title: 'New Chat',
         messages: [],
+        chatFiles: [],
         createdAt: new Date(),
         userId: user.id
       }
@@ -114,27 +132,27 @@ export default function ChatPage() {
     }
   }, [user])
 
-  // Save chats when they change
   useEffect(() => {
     if (user && chats.length > 0) {
       saveChatsToStorage(user.id, chats)
     }
   }, [chats, user])
 
-  // NEW: Save file settings when they change
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('useAllFiles_' + user.id, useAllFiles.toString())
-      localStorage.setItem('fileEnabled_' + user.id, JSON.stringify(fileEnabledState))
-      localStorage.setItem('fileScope_' + user.id, JSON.stringify(fileScopeState))
-    }
-  }, [useAllFiles, fileEnabledState, fileScopeState, user])
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chats, currentChatId])
 
-  // Fetch available models for provider
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowFilesDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const fetchModels = async (provider) => {
     try {
       const res = await fetch('/api/models?provider=' + provider)
@@ -187,29 +205,6 @@ export default function ChatPage() {
     notify(`${provider} API key saved!`, 'success')
   }
 
-  // NEW: Toggle individual file
-  const toggleFileEnabled = (fileId) => {
-    setFileEnabledState(prev => ({
-      ...prev,
-      [fileId]: !(prev[fileId] ?? true)
-    }))
-  }
-
-  // NEW: Toggle file scope (global -> chat -> library)
-  const toggleFileScope = (fileId) => {
-    setFileScopeState(prev => {
-      const current = prev[fileId] || 'library'
-      const next = current === 'library' ? 'chat' : current === 'chat' ? 'global' : 'library'
-      return { ...prev, [fileId]: next }
-    })
-    
-    const scopeNames = { library: 'Library', chat: 'Chat Only', global: 'Global' }
-    const newScope = fileScopeState[fileId] === 'library' ? 'chat' : 
-                     fileScopeState[fileId] === 'chat' ? 'global' : 'library'
-    notify(`Scope: ${scopeNames[newScope]}`, 'info')
-  }
-
-  // Chat operations
   const loadChatsFromStorage = (userId) => {
     try {
       const saved = localStorage.getItem(`chats_${userId}`)
@@ -240,11 +235,13 @@ export default function ChatPage() {
       id: Date.now().toString(),
       title: 'New Chat',
       messages: [],
+      chatFiles: [],
       createdAt: new Date(),
       userId: user.id
     }
     setChats(prev => [newChat, ...prev])
     setCurrentChatId(newChat.id)
+    setChatFiles([])
   }
 
   const deleteChat = (chatId, e) => {
@@ -258,7 +255,7 @@ export default function ChatPage() {
     }
   }
 
-  // File operations
+  // Load user files (persistent)
   const loadUserFiles = async () => {
     if (!user) return
     
@@ -267,28 +264,90 @@ export default function ChatPage() {
         .from('files')
         .select('*')
         .eq('user_id', user.id)
+        .eq('scope', 'user')
         .order('created_at', { ascending: false })
       
       if (error) throw error
       
-      setUploadedFiles(data.map(f => ({
+      setUserFiles(data.map(f => ({
         id: f.id,
         name: f.name,
         size: (f.file_size / 1024).toFixed(1) + 'K',
         file_path: f.file_path,
-        content: f.content
+        content: f.content,
+        scope: 'user'
       })))
     } catch (error) {
-      console.error('Load files error:', error)
+      console.error('Load user files error:', error)
     }
   }
 
-  const uploadFiles = async (files) => {
+  // Load global files (shared)
+  const loadGlobalFiles = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('files')
+        .select('*')
+        .eq('scope', 'global')
+        .order('created_at', { ascending: false })
+      
+      if (error) throw error
+      
+      setGlobalFiles(data.map(f => ({
+        id: f.id,
+        name: f.name,
+        size: (f.file_size / 1024).toFixed(1) + 'K',
+        file_path: f.file_path,
+        content: f.content,
+        scope: 'global',
+        uploadedBy: f.user_id
+      })))
+    } catch (error) {
+      console.error('Load global files error:', error)
+    }
+  }
+
+  // Upload files with scope selection
+  const uploadFiles = async (files, scope = 'user') => {
     if (!files || files.length === 0) return
     
     const arr = Array.from(files)
-    setLoading(true)
     
+    // Chat-only files don't need upload
+    if (scope === 'chat') {
+      setLoading(true)
+      try {
+        for (const file of arr) {
+          if (file.size > 10 * 1024 * 1024) {
+            notify(file.name + ' too large', 'error')
+            continue
+          }
+          
+          // Parse file locally
+          const { parseFile } = await import('../lib/fileParser')
+          const content = await parseFile(file, file.type)
+          
+          const chatFile = {
+            id: 'chat_' + Date.now() + '_' + Math.random(),
+            name: file.name,
+            size: (file.size / 1024).toFixed(1) + 'K',
+            content: content,
+            scope: 'chat'
+          }
+          
+          setChatFiles(prev => [...prev, chatFile])
+        }
+        notify('✓ Added to chat', 'success')
+      } catch (error) {
+        notify('Failed to add files', 'error')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+    
+    // User/Global files need database upload
+    setLoading(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       
@@ -307,6 +366,7 @@ export default function ChatPage() {
         try {
           const formData = new FormData()
           formData.append('file', file)
+          formData.append('scope', scope)
           
           const res = await fetch('/api/upload', {
             method: 'POST',
@@ -322,8 +382,9 @@ export default function ChatPage() {
       }
       
       if (count > 0) {
-        await loadUserFiles()
-        notify('✓ ' + count + ' uploaded', 'success')
+        if (scope === 'user') await loadUserFiles()
+        if (scope === 'global') await loadGlobalFiles()
+        notify(`✓ ${count} uploaded to ${scope} database`, 'success')
       }
     } catch (error) {
       notify('Upload failed', 'error')
@@ -337,22 +398,20 @@ export default function ChatPage() {
     
     try {
       setLoading(true)
+      
+      if (file.scope === 'chat') {
+        setChatFiles(prev => prev.filter(f => f.id !== file.id))
+        notify('✓ Removed from chat', 'success')
+        return
+      }
+      
+      // Delete from database
       await supabase.storage.from('documents').remove([file.file_path])
       await supabase.from('files').delete().eq('id', file.id).eq('user_id', user.id)
       
-      // NEW: Clean up file states
-      setFileEnabledState(prev => {
-        const newState = { ...prev }
-        delete newState[file.id]
-        return newState
-      })
-      setFileScopeState(prev => {
-        const newState = { ...prev }
-        delete newState[file.id]
-        return newState
-      })
+      if (file.scope === 'user') await loadUserFiles()
+      if (file.scope === 'global') await loadGlobalFiles()
       
-      await loadUserFiles()
       notify('✓ Deleted', 'success')
     } catch (error) {
       notify('Failed', 'error')
@@ -362,31 +421,32 @@ export default function ChatPage() {
   }
 
   const downloadFile = async (file) => {
+    if (file.scope === 'chat') {
+      const blob = new Blob([file.content], { type: 'text/plain' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.name
+      a.click()
+      URL.revokeObjectURL(url)
+      return
+    }
+    
     try {
-      const { data, error } = await supabase
-        .storage
-        .from('documents')
-        .download(file.file_path)
-
-      if (error) {
-        notify('Download failed', 'error')
-        return
-      }
-
+      const { data, error } = await supabase.storage.from('documents').download(file.file_path)
+      if (error) throw error
+      
       const url = URL.createObjectURL(data)
       const a = document.createElement('a')
       a.href = url
       a.download = file.name
-      document.body.appendChild(a)
       a.click()
-      a.remove()
       URL.revokeObjectURL(url)
     } catch (err) {
       notify('Download failed', 'error')
     }
   }
 
-  // Drag and drop
   const handleDragOver = (e) => {
     e.preventDefault()
     setIsDragging(true)
@@ -400,10 +460,12 @@ export default function ChatPage() {
   const handleDrop = (e) => {
     e.preventDefault()
     setIsDragging(false)
-    if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files)
+    if (e.dataTransfer.files.length > 0) {
+      // Default to user database
+      uploadFiles(e.dataTransfer.files, 'user')
+    }
   }
 
-  // Google Drive
   const fetchDriveLink = async () => {
     if (!driveLink.trim()) {
       notify('Please enter a Google Drive link', 'error')
@@ -447,36 +509,16 @@ export default function ChatPage() {
     notify('Removed', 'info')
   }
 
-  // NEW: Get files that should be sent to AI
-  const getActiveFiles = () => {
-    // If using all files globally, return all uploaded files
-    if (useAllFiles) {
-      return uploadedFiles.filter(f => {
-        const scope = fileScopeState[f.id] || 'library'
-        // Global files always included
-        if (scope === 'global') return true
-        // Chat files only if in current chat
-        if (scope === 'chat') return true // In real app, check if file belongs to current chat
-        // Library files included when useAllFiles is true
-        return true
-      })
-    }
-    
-    // If not using all files, only use enabled ones
-    return uploadedFiles.filter(f => {
-      const isEnabled = fileEnabledState[f.id] ?? true
-      const scope = fileScopeState[f.id] || 'library'
-      
-      // Global files always included if enabled
-      if (scope === 'global' && isEnabled) return true
-      // Chat-specific files included if enabled
-      if (scope === 'chat' && isEnabled) return true
-      // Library files only if enabled
-      return scope === 'library' && isEnabled
-    })
+  // Get all active files for AI
+  const getAllActiveFiles = () => {
+    return [
+      ...chatFiles.map(f => ({ name: f.name, content: f.content })),
+      ...userFiles.map(f => ({ name: f.name, content: f.content })),
+      ...globalFiles.map(f => ({ name: f.name, content: f.content })),
+      ...driveLinkFiles.map(f => ({ name: f.name, content: f.content }))
+    ]
   }
 
-  // Send message
   const sendMessage = async (content) => {
     if (!content.trim() || loading) return
 
@@ -501,12 +543,7 @@ export default function ChatPage() {
         throw new Error('Not authenticated')
       }
 
-      // NEW: Get active files based on settings
-      const activeFiles = getActiveFiles()
-      const fileContents = [
-        ...activeFiles.map(f => ({ name: f.name, content: f.content })),
-        ...driveLinkFiles.map(f => ({ name: f.name, content: f.content }))
-      ]
+      const fileContents = getAllActiveFiles()
 
       const headers = {
         'Content-Type': 'application/json',
@@ -601,7 +638,7 @@ export default function ChatPage() {
     )
   }
 
-  const totalActiveFiles = getActiveFiles().length + driveLinkFiles.length
+  const totalActiveFiles = chatFiles.length + userFiles.length + globalFiles.length + driveLinkFiles.length
 
   return (
     <div 
@@ -610,7 +647,6 @@ export default function ChatPage() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Notification */}
       {notification && (
         <div className="fixed top-4 right-4 z-50 animate-slide-in">
           <div className={`border rounded-xl px-4 py-2 backdrop-blur-xl ${
@@ -623,12 +659,11 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Drag overlay */}
       {isDragging && (
         <div className="fixed inset-0 bg-black/90 z-40 flex items-center justify-center">
           <div className="border-2 border-white p-8 rounded-2xl">
             <Upload className="w-16 h-16 mx-auto mb-3 text-white" />
-            <p className="text-xl font-bold text-white">Drop Files</p>
+            <p className="text-xl font-bold text-white">Drop Files to User Database</p>
           </div>
         </div>
       )}
@@ -663,7 +698,10 @@ export default function ChatPage() {
                   <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-500" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{chat.title}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{chat.messages?.length || 0} messages</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {chat.messages?.length || 0} messages
+                      {chat.chatFiles?.length > 0 && ` • ${chat.chatFiles.length} files`}
+                    </p>
                   </div>
                 </div>
                 {chats.length > 1 && (
@@ -722,16 +760,251 @@ export default function ChatPage() {
               <Key className="w-3.5 h-3.5" />
             </button>
 
-            <button onClick={() => setShowFiles(true)} className="p-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 relative">
-              <FileText className="w-4 h-4" />
-              {totalActiveFiles > 0 && (
-                <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                  {totalActiveFiles}
-                </span>
-              )}
-            </button>
+            {/* NEW: Files Dropdown Button */}
+            <div className="relative" ref={dropdownRef}>
+              <button 
+                onClick={() => setShowFilesDropdown(!showFilesDropdown)} 
+                className="p-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 relative flex items-center gap-1"
+              >
+                <FileText className="w-4 h-4" />
+                <ChevronDown className="w-3 h-3" />
+                {totalActiveFiles > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {totalActiveFiles}
+                  </span>
+                )}
+              </button>
+{/* Files Dropdown Menu */}
+              {showFilesDropdown && (
+                <div className="absolute top-full right-0 mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-2xl z-50 max-h-[600px] overflow-hidden flex flex-col">
+                  
+                  {/* Header */}
+                  <div className="p-4 border-b border-gray-200 bg-gray-50">
+                    <h3 className="font-semibold text-sm mb-1">File Manager</h3>
+                    <p className="text-xs text-gray-500">Choose where to save your files</p>
+                  </div>
 
-            <button onClick={() => setShowDrive(true)} className="p-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">
+                  {/* Upload Options */}
+                  <div className="p-3 border-b border-gray-200 space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      {/* Chat Only Button */}
+                      <button
+                        onClick={() => {
+                          fileInputRef.current?.click()
+                          fileInputRef.current?.setAttribute('data-scope', 'chat')
+                        }}
+                        className="flex flex-col items-center gap-1 p-3 border-2 border-purple-300 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+                      >
+                        <MessageCircle className="w-5 h-5 text-purple-600" />
+                        <span className="text-xs font-medium text-purple-700">Chat Only</span>
+                        <span className="text-[10px] text-purple-600">Temporary</span>
+                      </button>
+
+                      {/* My Database Button */}
+                      <button
+                        onClick={() => {
+                          fileInputRef.current?.click()
+                          fileInputRef.current?.setAttribute('data-scope', 'user')
+                        }}
+                        className="flex flex-col items-center gap-1 p-3 border-2 border-blue-300 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                      >
+                        <Database className="w-5 h-5 text-blue-600" />
+                        <span className="text-xs font-medium text-blue-700">My Database</span>
+                        <span className="text-[10px] text-blue-600">Saved</span>
+                      </button>
+
+                      {/* Global Button */}
+                      <button
+                        onClick={() => {
+                          fileInputRef.current?.click()
+                          fileInputRef.current?.setAttribute('data-scope', 'global')
+                        }}
+                        className="flex flex-col items-center gap-1 p-3 border-2 border-green-300 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+                      >
+                        <Globe className="w-5 h-5 text-green-600" />
+                        <span className="text-xs font-medium text-green-700">Global</span>
+                        <span className="text-[10px] text-green-600">Shared</span>
+                      </button>
+                    </div>
+
+                    {/* Hidden File Input */}
+                    <input 
+                      ref={fileInputRef} 
+                      type="file" 
+                      multiple 
+                      onChange={(e) => {
+                        const scope = e.target.getAttribute('data-scope') || 'user'
+                        uploadFiles(e.target.files, scope)
+                        e.target.value = ''
+                      }} 
+                      className="hidden" 
+                    />
+                  </div>
+
+                  {/* Files List - Scrollable */}
+                  <div className="flex-1 overflow-y-auto custom-scroll">
+                    
+                    {/* Chat Files Section */}
+                    {chatFiles.length > 0 && (
+                      <div className="p-3 border-b border-gray-200">
+                        <div className="flex items-center gap-2 mb-2">
+                          <MessageCircle className="w-4 h-4 text-purple-600" />
+                          <h4 className="text-xs font-semibold text-purple-700">
+                            Chat Only ({chatFiles.length})
+                          </h4>
+                          <span className="text-[10px] text-purple-500">• Lost on refresh</span>
+                        </div>
+                        <div className="space-y-1">
+                          {chatFiles.map(f => (
+                            <div 
+                              key={f.id} 
+                              className="flex items-center gap-2 p-2 bg-purple-50 border border-purple-200 rounded-lg text-xs group"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-purple-600 flex-shrink-0" />
+                              
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium truncate text-purple-900">{f.name}</p>
+                                <p className="text-purple-600">{f.size}</p>
+                              </div>
+                              
+                              <button 
+                                onClick={() => downloadFile(f)} 
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-purple-200 rounded transition-opacity"
+                                title="Download"
+                              >
+                                <Download className="w-3.5 h-3.5 text-purple-700" />
+                              </button>
+                              
+                              <button 
+                                onClick={() => deleteFile(f)} 
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity"
+                                title="Remove from chat"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* User Files Section */}
+                    {userFiles.length > 0 && (
+                      <div className="p-3 border-b border-gray-200">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Database className="w-4 h-4 text-blue-600" />
+                          <h4 className="text-xs font-semibold text-blue-700">
+                            My Database ({userFiles.length})
+                          </h4>
+                          <span className="text-[10px] text-blue-500">• Persistent</span>
+                        </div>
+                        <div className="space-y-1">
+                          {userFiles.map(f => (
+                            <div 
+                              key={f.id} 
+                              className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-lg text-xs group"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                              
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium truncate text-blue-900">{f.name}</p>
+                                <p className="text-blue-600">{f.size}</p>
+                              </div>
+                              
+                              <button 
+                                onClick={() => downloadFile(f)} 
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-blue-200 rounded transition-opacity"
+                                title="Download"
+                              >
+                                <Download className="w-3.5 h-3.5 text-blue-700" />
+                              </button>
+                              
+                              <button 
+                                onClick={() => deleteFile(f)} 
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity"
+                                title="Delete permanently"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Global Files Section */}
+                    {globalFiles.length > 0 && (
+                      <div className="p-3 border-b border-gray-200">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Globe className="w-4 h-4 text-green-600" />
+                          <h4 className="text-xs font-semibold text-green-700">
+                            Global Database ({globalFiles.length})
+                          </h4>
+                          <span className="text-[10px] text-green-500">• Shared</span>
+                        </div>
+                        <div className="space-y-1">
+                          {globalFiles.map(f => (
+                            <div 
+                              key={f.id} 
+                              className="flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded-lg text-xs group"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+                              
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium truncate text-green-900">{f.name}</p>
+                                <p className="text-green-600">{f.size}</p>
+                              </div>
+                              
+                              <button 
+                                onClick={() => downloadFile(f)} 
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-green-200 rounded transition-opacity"
+                                title="Download"
+                              >
+                                <Download className="w-3.5 h-3.5 text-green-700" />
+                              </button>
+                              
+                              {/* Only show delete if user uploaded it */}
+                              {f.uploadedBy === user.id && (
+                                <button 
+                                  onClick={() => deleteFile(f)} 
+                                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity"
+                                  title="Delete (you uploaded this)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Empty State */}
+                    {totalActiveFiles === 0 && (
+                      <div className="p-8 text-center text-gray-400">
+                        <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">No files uploaded</p>
+                        <p className="text-xs mt-1">Choose a scope above to upload</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer Info */}
+                  <div className="p-3 border-t border-gray-200 bg-gray-50">
+                    <p className="text-[10px] text-gray-500 leading-relaxed">
+                      💡 <strong>Chat Only:</strong> Files stay only in this chat (temporary)<br/>
+                      💾 <strong>My Database:</strong> Files saved to your account (persistent)<br/>
+                      🌍 <strong>Global:</strong> Files shared with all users (permanent)
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button 
+              onClick={() => setShowDrive(true)} 
+              className="p-1.5 border border-gray-300 rounded-lg hover:bg-gray-100"
+            >
               <Cloud className="w-4 h-4" />
             </button>
           </div>
@@ -747,6 +1020,11 @@ export default function ChatPage() {
                 </div>
                 <h3 className="text-xl font-semibold mb-2">Start a conversation</h3>
                 <p className="text-gray-500 text-sm">Upload files or type a message</p>
+                {totalActiveFiles > 0 && (
+                  <div className="mt-4 text-xs text-blue-600">
+                    📎 {totalActiveFiles} file{totalActiveFiles > 1 ? 's' : ''} loaded
+                  </div>
+                )}
               </div>
             ) : (
               currentChat.messages.map((msg, idx) => (
@@ -808,308 +1086,196 @@ export default function ChatPage() {
         </div>
       </div>
 
-  {/* FILES MODAL - UPDATED */}
-  {showFiles && (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-md max-h-[85vh] overflow-hidden rounded-2xl shadow-2xl">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="font-bold flex items-center gap-2">
-            <FileText className="w-5 h-5" />
-            My Files
-          </h2>
-          <button onClick={() => setShowFiles(false)} className="p-1.5 hover:bg-gray-100 rounded-lg">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+      {/* DRIVE MODAL */}
+      {showDrive && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md max-h-[85vh] overflow-hidden rounded-2xl shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h2 className="font-bold flex items-center gap-2">
+                <Cloud className="w-5 h-5" />
+                Google Drive Links
+              </h2>
+              <button onClick={() => setShowDrive(false)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-        <div className="p-4 border-b border-gray-200">
-          <button onClick={() => fileInputRef.current?.click()} className="w-full bg-black text-white py-3 rounded-xl font-bold text-sm hover:bg-gray-800">
-            <Upload className="w-4 h-4 inline mr-2" />
-            Upload Files
-          </button>
-          <input ref={fileInputRef} type="file" multiple onChange={(e) => uploadFiles(e.target.files)} className="hidden" />
-        </div>
+            <div className="p-4 bg-gray-50 border-b border-gray-200">
+              <p className="text-xs text-gray-600 mb-2">📌 Share file as "Anyone with the link"</p>
+            </div>
 
-        {/* NEW: Global Toggle */}
-        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <label className="flex items-center justify-between cursor-pointer group">
-            <div className="flex items-center gap-3">
+            <div className="p-4 space-y-2">
               <input
-                type="checkbox"
-                checked={useAllFiles}
-                onChange={(e) => setUseAllFiles(e.target.checked)}
-                className="w-4 h-4 accent-black rounded"
+                type="text"
+                value={driveLink}
+                onChange={(e) => setDriveLink(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && fetchDriveLink()}
+                placeholder="Paste Google Drive link..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:border-gray-500"
+                disabled={loadingLink}
               />
-              <div>
-                <span className="text-sm font-medium block">
-                  🌍 Use all files globally
-                </span>
-                <span className="text-xs text-gray-500">
-                  {useAllFiles ? 'All files are enabled' : 'Toggle files individually'}
-                </span>
-              </div>
+              <button
+                onClick={fetchDriveLink}
+                disabled={loadingLink || !driveLink.trim()}
+                className="w-full bg-black text-white py-3 rounded-xl font-bold text-sm hover:bg-gray-800 disabled:opacity-50"
+              >
+                {loadingLink ? (
+                  <>
+                    <Loader2 className="w-4 h-4 inline animate-spin mr-2" />
+                    Fetching...
+                  </>
+                ) : (
+                  <>
+                    <Cloud className="w-4 h-4 inline mr-2" />
+                    Add File
+                  </>
+                )}
+              </button>
             </div>
-          </label>
-        </div>
 
-        <div className="max-h-[50vh] overflow-y-auto px-4 pb-4 custom-scroll">
-          {uploadedFiles.length === 0 ? (
-            <p className="text-center py-8 text-gray-500 text-sm">No files uploaded</p>
-          ) : (
-            <div className="space-y-2 mt-4">
-              {uploadedFiles.map(f => {
-                const isEnabled = useAllFiles || (fileEnabledState[f.id] ?? true)
-                const scope = fileScopeState[f.id] || 'library'
-                const scopeInfo = {
-                  global: { icon: '🌍', label: 'Global', color: 'text-blue-600 bg-blue-50 border-blue-200' },
-                  chat: { icon: '💬', label: 'Chat', color: 'text-purple-600 bg-purple-50 border-purple-200' },
-                  library: { icon: '📁', label: 'Library', color: 'text-gray-600 bg-gray-50 border-gray-200' }
-                }
-                
-                return (
-                  <div 
-                    key={f.id} 
-                    className={`border rounded-xl p-3 transition-all ${
-                      isEnabled ? 'border-gray-300 bg-white' : 'border-gray-200 bg-gray-50 opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      
-                      {/* Individual Toggle (only show if NOT using all files) */}
-                      {!useAllFiles && (
-                        <label className="flex items-center cursor-pointer pt-1">
-                          <input
-                            type="checkbox"
-                            checked={fileEnabledState[f.id] ?? true}
-                            onChange={() => toggleFileEnabled(f.id)}
-                            className="w-4 h-4 accent-black rounded"
-                          />
-                        </label>
-                      )}
-
-                      {/* File Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="text-sm font-medium truncate flex-1">{f.name}</p>
-                          
-                          {/* Scope Badge */}
-                          <button
-                            onClick={() => toggleFileScope(f.id)}
-                            className={`text-xs px-2 py-1 rounded-full border font-medium ${scopeInfo[scope].color} hover:opacity-80 transition-opacity`}
-                            title="Click to change scope: Library → Chat → Global"
-                          >
-                            {scopeInfo[scope].icon} {scopeInfo[scope].label}
-                          </button>
-                        </div>
-                        
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <span>{f.size}</span>
-                          
-                          {/* Status */}
-                          {isEnabled ? (
-                            <span className="text-green-600 flex items-center gap-1">
-                              <div className="w-1.5 h-1.5 bg-green-600 rounded-full"></div>
-                              Active
-                            </span>
-                          ) : (
-                            <span className="text-gray-400 flex items-center gap-1">
-                              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full"></div>
-                              Disabled
-                            </span>
-                          )}
-                        </div>
+            <div className="max-h-[40vh] overflow-y-auto px-4 pb-4 custom-scroll">
+              {driveLinkFiles.length === 0 ? (
+                <p className="text-center py-8 text-gray-500 text-sm">No files added</p>
+              ) : (
+                <div className="space-y-2">
+                  {driveLinkFiles.map(file => (
+                    <div key={file.fileId} className="border border-gray-200 p-3 rounded-xl flex items-center justify-between group hover:border-gray-300">
+                      <div className="flex-1 min-w-0 mr-2">
+                        <p className="text-sm font-medium truncate">{file.name}</p>
+                        <p className="text-xs text-gray-500">{file.type}</p>
                       </div>
-
-                      {/* Action Buttons */}
-                      <div className="flex items-center gap-1">
-                        <button 
-                          onClick={() => downloadFile(f)} 
-                          className="p-1.5 hover:bg-blue-100 rounded-lg transition-colors"
-                          title="Download"
-                        >
-                          <Download className="w-4 h-4 text-blue-600" />
-                        </button>
-                        <button 
-                          onClick={() => deleteFile(f)} 
-                          className="p-1.5 hover:bg-red-100 rounded-lg transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
-                      </div>
+                      <button 
+                        onClick={() => removeDriveLinkFile(file.fileId)} 
+                        className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 rounded-lg"
+                      >
+                        <Trash2 className="w-4 h-4 text-red-600" />
+                      </button>
                     </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
-                    {/* Scope Description */}
-                    {scope === 'global' && (
-                      <div className="mt-2 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                        ℹ️ Available in all chats
+      {/* SETTINGS MODAL */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl shadow-2xl">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold">Settings</h2>
+              <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex border-b border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setSettingsTab('account')}
+                className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
+                  settingsTab === 'account' ? 'border-b-2 border-black text-black bg-white' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <User className="w-4 h-4 inline mr-2" />
+                Account
+              </button>
+              <button
+                onClick={() => setSettingsTab('api')}
+                className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
+                  settingsTab === 'api' ? 'border-b-2 border-black text-black bg-white' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Key className="w-4 h-4 inline mr-2" />
+                API Keys
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 max-h-[calc(90vh-180px)]">
+              {settingsTab === 'account' && (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4">Change Password</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-gray-700">Current Password</label>
+                        <input 
+                          type="password" 
+                          value={currentPassword} 
+                          onChange={(e) => setCurrentPassword(e.target.value)} 
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500" 
+                          placeholder="••••••••" 
+                        />
                       </div>
-                    )}
-                    {scope === 'chat' && (
-                      <div className="mt-2 text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded">
-                        ℹ️ Only in this chat
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-gray-700">New Password</label>
+                        <input 
+                          type="password" 
+                          value={newPassword} 
+                          onChange={(e) => setNewPassword(e.target.value)} 
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500" 
+                          placeholder="••••••••" 
+                        />
                       </div>
-                    )}
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-gray-700">Confirm New Password</label>
+                        <input 
+                          type="password" 
+                          value={confirmPassword} 
+                          onChange={(e) => setConfirmPassword(e.target.value)} 
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500" 
+                          placeholder="••••••••" 
+                        />
+                      </div>
+                      <button 
+                        onClick={handlePasswordChange} 
+                        className="px-6 py-2.5 bg-black text-white rounded-lg hover:bg-gray-800 font-medium"
+                      >
+                        Update Password
+                      </button>
+                    </div>
                   </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )}
-
-  {/* DRIVE MODAL - UNCHANGED */}
-  {showDrive && (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-md max-h-[85vh] overflow-hidden rounded-2xl shadow-2xl">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="font-bold flex items-center gap-2">
-            <Cloud className="w-5 h-5" />
-            Google Drive Links
-          </h2>
-          <button onClick={() => setShowDrive(false)} className="p-1.5 hover:bg-gray-100 rounded-lg">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-4 bg-gray-50 border-b border-gray-200">
-          <p className="text-xs text-gray-600 mb-2">📌 Share file as "Anyone with the link"</p>
-        </div>
-
-        <div className="p-4 space-y-2">
-          <input
-            type="text"
-            value={driveLink}
-            onChange={(e) => setDriveLink(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && fetchDriveLink()}
-            placeholder="Paste Google Drive link..."
-            className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:border-gray-500"
-            disabled={loadingLink}
-          />
-          <button
-            onClick={fetchDriveLink}
-            disabled={loadingLink || !driveLink.trim()}
-            className="w-full bg-black text-white py-3 rounded-xl font-bold text-sm hover:bg-gray-800 disabled:opacity-50"
-          >
-            {loadingLink ? <><Loader2 className="w-4 h-4 inline animate-spin mr-2" />Fetching...</> : <><Cloud className="w-4 h-4 inline mr-2" />Add File</>}
-          </button>
-        </div>
-
-        <div className="max-h-[40vh] overflow-y-auto px-4 pb-4 custom-scroll">
-          {driveLinkFiles.length === 0 ? (
-            <p className="text-center py-8 text-gray-500 text-sm">No files added</p>
-          ) : (
-            <div className="space-y-2">
-              {driveLinkFiles.map(file => (
-                <div key={file.fileId} className="border border-gray-200 p-3 rounded-xl flex items-center justify-between group hover:border-gray-300">
-                  <div className="flex-1 min-w-0 mr-2">
-                    <p className="text-sm font-medium truncate">{file.name}</p>
-                    <p className="text-xs text-gray-500">{file.type}</p>
+                  <div className="pt-6 border-t border-gray-200">
+                    <button 
+                      onClick={signOut} 
+                      className="flex items-center gap-2 text-red-600 hover:text-red-700 font-medium"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Sign Out
+                    </button>
                   </div>
-                  <button onClick={() => removeDriveLinkFile(file.fileId)} className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 rounded-lg">
-                    <Trash2 className="w-4 h-4 text-red-600" />
-                  </button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )}
+              )}
 
-{/* SETTINGS MODAL */}
-  {showSettings && (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl shadow-2xl">
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold">Settings</h2>
-          <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-gray-100 rounded-lg">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="flex border-b border-gray-200 bg-gray-50">
-          <button
-            onClick={() => setSettingsTab('account')}
-            className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
-              settingsTab === 'account' ? 'border-b-2 border-black text-black bg-white' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <User className="w-4 h-4 inline mr-2" />
-            Account
-          </button>
-          <button
-            onClick={() => setSettingsTab('api')}
-            className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
-              settingsTab === 'api' ? 'border-b-2 border-black text-black bg-white' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <Key className="w-4 h-4 inline mr-2" />
-            API Keys
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6 max-h-[calc(90vh-180px)]">
-          {settingsTab === 'account' && (
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold mb-4">Change Password</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700">Current Password</label>
-                    <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500" placeholder="••••••••" />
+              {settingsTab === 'api' && (
+                <div className="space-y-6">
+                  {Object.keys(PROVIDERS).map(provider => (
+                    <div key={provider} className="space-y-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                      <h3 className="font-semibold capitalize text-lg">{PROVIDERS[provider].name}</h3>
+                      <input
+                        type="password"
+                        value={apiKeys[provider] || ''}
+                        onChange={(e) => setApiKeys(prev => ({ ...prev, [provider]: e.target.value }))}
+                        placeholder={`${provider} API key`}
+                        className="w-full px-4 py-2.5 border border-gray-300 bg-white rounded-lg focus:outline-none focus:border-gray-500 text-sm"
+                      />
+                      <button 
+                        onClick={() => saveApiKey(provider)} 
+                        className="px-4 py-2 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg text-sm font-medium"
+                      >
+                        Save Key
+                      </button>
+                    </div>
+                  ))}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-xs text-blue-800">🔒 API keys stored locally in browser</p>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700">New Password</label>
-                    <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500" placeholder="••••••••" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700">Confirm New Password</label>
-                    <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-gray-500" placeholder="••••••••" />
-                  </div>
-                  <button onClick={handlePasswordChange} className="px-6 py-2.5 bg-black text-white rounded-lg hover:bg-gray-800 font-medium">
-                    Update Password
-                  </button>
                 </div>
-              </div>
-              <div className="pt-6 border-t border-gray-200">
-                <button onClick={signOut} className="flex items-center gap-2 text-red-600 hover:text-red-700 font-medium">
-                  <LogOut className="w-4 h-4" />
-                  Sign Out
-                </button>
-              </div>
+              )}
             </div>
-          )}
-
-          {settingsTab === 'api' && (
-            <div className="space-y-6">
-              {Object.keys(PROVIDERS).map(provider => (
-                <div key={provider} className="space-y-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                  <h3 className="font-semibold capitalize text-lg">{PROVIDERS[provider].name}</h3>
-                  <input
-                    type="password"
-                    value={apiKeys[provider] || ''}
-                    onChange={(e) => setApiKeys(prev => ({ ...prev, [provider]: e.target.value }))}
-                    placeholder={`${provider} API key`}
-                    className="w-full px-4 py-2.5 border border-gray-300 bg-white rounded-lg focus:outline-none focus:border-gray-500 text-sm"
-                  />
-                  <button onClick={() => saveApiKey(provider)} className="px-4 py-2 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg text-sm font-medium">
-                    Save Key
-                  </button>
-                </div>
-              ))}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-xs text-blue-800">🔒 API keys stored locally in browser</p>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
-    </div>
-  )}
+      )}
     </div>
   )
 }
