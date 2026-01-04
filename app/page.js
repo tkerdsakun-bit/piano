@@ -27,17 +27,13 @@ export default function ChatPage() {
   const [showDrive, setShowDrive] = useState(false)
   const [settingsTab, setSettingsTab] = useState('account')
   
-  // Collapsible sections state
   const [sectionCollapsed, setSectionCollapsed] = useState({
     user: false,
     global: false
   })
   
-  // File storage - ONLY user and global
   const [userFiles, setUserFiles] = useState([])
   const [globalFiles, setGlobalFiles] = useState([])
-  
-  // File enabled state
   const [fileEnabled, setFileEnabled] = useState({})
   
   const [isDragging, setIsDragging] = useState(false)
@@ -51,7 +47,6 @@ export default function ChatPage() {
   const [useOwnKey, setUseOwnKey] = useState(false)
   const [userApiKey, setUserApiKey] = useState('')
   
-  // Settings
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -63,7 +58,6 @@ export default function ChatPage() {
     deepseek: ''
   })
   
-  // Drive links
   const [driveLink, setDriveLink] = useState('')
   const [loadingLink, setLoadingLink] = useState(false)
   const [driveLinkFiles, setDriveLinkFiles] = useState([])
@@ -76,7 +70,7 @@ export default function ChatPage() {
     setTimeout(() => setNotification(null), 3000)
   }
 
-  // Initialize
+  // Initialize - WITH MODEL MIGRATION
   useEffect(() => {
     if (user) {
       const savedKey = localStorage.getItem('key_' + user.id)
@@ -96,7 +90,19 @@ export default function ChatPage() {
       
       if (savedKey) setUserApiKey(savedKey)
       if (savedProvider) setSelectedProvider(savedProvider)
-      if (savedModel) setSelectedModel(savedModel)
+      
+      // ✅ AUTO-MIGRATE DEPRECATED MODELS
+      if (savedModel) {
+        if (savedModel === 'sonar-reasoning') {
+          const newModel = 'sonar-reasoning-pro'
+          setSelectedModel(newModel)
+          localStorage.setItem('model_' + user.id, newModel)
+          notify('⚠️ Model updated to sonar-reasoning-pro', 'info')
+        } else {
+          setSelectedModel(savedModel)
+        }
+      }
+      
       if (savedPref === 'true') setUseOwnKey(true)
       
       loadUserFiles()
@@ -783,7 +789,7 @@ export default function ChatPage() {
                         }}
                         className="flex flex-col items-center gap-1 p-3 border-2 border-blue-300 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
                       >
-                                                <Database className="w-5 h-5 text-blue-600" />
+                        <Database className="w-5 h-5 text-blue-600" />
                         <span className="text-xs font-medium text-blue-900">User Database</span>
                       </button>
                       <button
