@@ -526,9 +526,6 @@ export default function ChatPage() {
       .map(f => ({ name: f.name, content: f.content }))
   }
 
-  const totalFiles = userFiles.length + globalFiles.length + driveLinkFiles.length
-  const totalActiveFiles = getAllActiveFiles().length
-
   const sendMessage = async (content) => {
     if (!content.trim() || loading) return
 
