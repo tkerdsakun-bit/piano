@@ -562,7 +562,7 @@ export default function ChatPage() {
       })
 
       setDriveLink('')
-      notify(`✓ Added: ${data.file.name}`, 'success')
+      notify(`✅ ${count} uploaded to ${scope} database`, 'success')
     } catch (error) {
       notify(error.message || 'Failed to fetch file', 'error')
     } finally {
