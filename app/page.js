@@ -29,13 +29,11 @@ export default function ChatPage() {
   
   // NEW: Collapsible sections state
   const [sectionCollapsed, setSectionCollapsed] = useState({
-    chat: false,
     user: false,
     global: false
   })
   
   // Separate file storage by scope
-  const [chatFiles, setChatFiles] = useState([])
   const [userFiles, setUserFiles] = useState([])
   const [globalFiles, setGlobalFiles] = useState([])
   
@@ -124,32 +122,27 @@ export default function ChatPage() {
     }
   }, [sectionCollapsed, user])
 
-  // Load chats and restore chat files from saved state
+  // Load chats and restore from saved state
   useEffect(() => {
     if (user && currentChatId && chats.length > 0) {
-      const currentChat = chats.find(c => c.id === currentChatId)
-      if (currentChat?.chatFiles) {
-        setChatFiles(currentChat.chatFiles)
-      } else {
-        setChatFiles([])
-      }
+      // No chat files to restore anymore
     }
   }, [currentChatId, chats, user])
 
-  // Save chat files to chat state
+  // Save chats to storage
   useEffect(() => {
-    if (user && currentChatId && chatFiles.length >= 0) {
+    if (user && currentChatId) {
       setChats(prev => prev.map(chat => 
         chat.id === currentChatId 
-          ? { ...chat, chatFiles: chatFiles }
+          ? { ...chat }
           : chat
       ))
     }
-  }, [chatFiles, currentChatId, user])
+  }, [currentChatId, user])
 
   // Initialize new files as enabled by default
   useEffect(() => {
-    const allFiles = [...chatFiles, ...userFiles, ...globalFiles]
+    const allFiles = [...userFiles, ...globalFiles]
     const newEnabled = { ...fileEnabled }
     let hasChanges = false
     
@@ -163,7 +156,7 @@ export default function ChatPage() {
     if (hasChanges) {
       setFileEnabled(newEnabled)
     }
-  }, [chatFiles, userFiles, globalFiles])
+  }, [userFiles, globalFiles])
 
   useEffect(() => {
     if (user && chats.length === 0) {
@@ -171,7 +164,6 @@ export default function ChatPage() {
         id: Date.now().toString(),
         title: 'New Chat',
         messages: [],
-        chatFiles: [],
         createdAt: new Date(),
         userId: user.id
       }
@@ -298,13 +290,11 @@ export default function ChatPage() {
       id: Date.now().toString(),
       title: 'New Chat',
       messages: [],
-      chatFiles: [],
       createdAt: new Date(),
       userId: user.id
     }
     setChats(prev => [newChat, ...prev])
     setCurrentChatId(newChat.id)
-    setChatFiles([])
   }
 
   const deleteChat = (chatId, e) => {
@@ -373,37 +363,6 @@ export default function ChatPage() {
     
     const arr = Array.from(files)
     
-    if (scope === 'chat') {
-      setLoading(true)
-      try {
-        for (const file of arr) {
-          if (file.size > 10 * 1024 * 1024) {
-            notify(file.name + ' too large', 'error')
-            continue
-          }
-          
-          const { parseFile } = await import('../lib/fileParser')
-          const content = await parseFile(file, file.type)
-          
-          const chatFile = {
-            id: 'chat_' + Date.now() + '_' + Math.random(),
-            name: file.name,
-            size: (file.size / 1024).toFixed(1) + 'K',
-            content: content,
-            scope: 'chat'
-          }
-          
-          setChatFiles(prev => [...prev, chatFile])
-        }
-        notify('✓ Added to chat', 'success')
-      } catch (error) {
-        notify('Failed to add files', 'error')
-      } finally {
-        setLoading(false)
-      }
-      return
-    }
-    
     setLoading(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -456,18 +415,6 @@ export default function ChatPage() {
     try {
       setLoading(true)
       
-      if (file.scope === 'chat') {
-        setChatFiles(prev => prev.filter(f => f.id !== file.id))
-        // Remove from fileEnabled state
-        setFileEnabled(prev => {
-          const newState = { ...prev }
-          delete newState[file.id]
-          return newState
-        })
-        notify('✓ Removed from chat', 'success')
-        return
-      }
-      
       await supabase.storage.from('documents').remove([file.file_path])
       await supabase.from('files').delete().eq('id', file.id).eq('user_id', user.id)
       
@@ -490,17 +437,6 @@ export default function ChatPage() {
   }
 
   const downloadFile = async (file) => {
-    if (file.scope === 'chat') {
-      const blob = new Blob([file.content], { type: 'text/plain' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = file.name
-      a.click()
-      URL.revokeObjectURL(url)
-      return
-    }
-    
     try {
       const { data, error } = await supabase.storage.from('documents').download(file.file_path)
       if (error) throw error
@@ -580,7 +516,6 @@ export default function ChatPage() {
   // Get all active files (only enabled ones)
   const getAllActiveFiles = () => {
     const allFiles = [
-      ...chatFiles.map(f => ({ ...f, enabled: fileEnabled[f.id] !== false })),
       ...userFiles.map(f => ({ ...f, enabled: fileEnabled[f.id] !== false })),
       ...globalFiles.map(f => ({ ...f, enabled: fileEnabled[f.id] !== false })),
       ...driveLinkFiles.map(f => ({ ...f, enabled: true }))
@@ -590,6 +525,9 @@ export default function ChatPage() {
       .filter(f => f.enabled)
       .map(f => ({ name: f.name, content: f.content }))
   }
+
+  const totalFiles = userFiles.length + globalFiles.length + driveLinkFiles.length
+  const totalActiveFiles = getAllActiveFiles().length
 
   const sendMessage = async (content) => {
     if (!content.trim() || loading) return
@@ -866,19 +804,7 @@ export default function ChatPage() {
 
                   {/* Upload Options */}
                   <div className="p-3 border-b border-gray-200 space-y-2">
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        onClick={() => {
-                          fileInputRef.current?.click()
-                          fileInputRef.current?.setAttribute('data-scope', 'chat')
-                        }}
-                        className="flex flex-col items-center gap-1 p-3 border-2 border-purple-300 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
-                      >
-                        <MessageCircle className="w-5 h-5 text-purple-600" />
-                        <span className="text-xs font-medium text-purple-700">Chat Only</span>
-                        <span className="text-[10px] text-purple-600">Temporary</span>
-                      </button>
-
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => {
                           fileInputRef.current?.click()
@@ -919,87 +845,6 @@ export default function ChatPage() {
                   {/* Files List with Toggles - Scrollable */}
                   <div className="flex-1 overflow-y-auto custom-scroll">
                     
-                    {/* Chat Files Section */}
-                    {chatFiles.length > 0 && (
-                      <div className="border-b border-gray-200">
-                        {/* Section Header - Collapsible */}
-                        <button
-                          onClick={() => toggleSection('chat')}
-                          className="w-full p-3 flex items-center gap-2 hover:bg-gray-50 transition-colors"
-                        >
-                          {sectionCollapsed.chat ? (
-                            <ChevronRight className="w-4 h-4 text-gray-400" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 text-gray-400" />
-                          )}
-                          <MessageCircle className="w-4 h-4 text-purple-600" />
-                          <h4 className="text-xs font-semibold text-purple-700 flex-1">
-                            Chat Only ({chatFiles.filter(f => fileEnabled[f.id] !== false).length}/{chatFiles.length})
-                          </h4>
-                          <span className="text-[10px] text-purple-500">Temporary</span>
-                        </button>
-
-                        {/* Files List */}
-                        {!sectionCollapsed.chat && (
-                          <div className="px-3 pb-3 space-y-1">
-                            {chatFiles.map(f => {
-                              const isEnabled = fileEnabled[f.id] !== false
-                              return (
-                                <div 
-                                  key={f.id} 
-                                  className={`flex items-center gap-2 p-2 rounded-lg text-xs group transition-all ${
-                                    isEnabled 
-                                      ? 'bg-purple-50 border border-purple-200' 
-                                      : 'bg-gray-50 border border-gray-200 opacity-50'
-                                  }`}
-                                >
-                                  {/* Toggle Button */}
-                                  <button
-                                    onClick={() => toggleFileEnabled(f.id)}
-                                    className="flex-shrink-0 p-1 hover:bg-purple-100 rounded transition-colors"
-                                    title={isEnabled ? 'Disable file' : 'Enable file'}
-                                  >
-                                    {isEnabled ? (
-                                      <Eye className="w-3.5 h-3.5 text-purple-600" />
-                                    ) : (
-                                      <EyeOff className="w-3.5 h-3.5 text-gray-400" />
-                                    )}
-                                  </button>
-
-                                  <FileText className="w-3.5 h-3.5 text-purple-600 flex-shrink-0" />
-                                  
-                                  <div className="flex-1 min-w-0">
-                                    <p className={`font-medium truncate ${isEnabled ? 'text-purple-900' : 'text-gray-500'}`}>
-                                      {f.name}
-                                    </p>
-                                    <p className={isEnabled ? 'text-purple-600' : 'text-gray-400'}>
-                                      {f.size}
-                                    </p>
-                                  </div>
-                                  
-                                  <button 
-                                    onClick={() => downloadFile(f)} 
-                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-purple-200 rounded transition-opacity"
-                                    title="Download"
-                                  >
-                                    <Download className="w-3.5 h-3.5 text-purple-700" />
-                                  </button>
-                                  
-                                  <button 
-                                    onClick={() => deleteFile(f)} 
-                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity"
-                                    title="Remove"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                                  </button>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
                     {/* User Files Section */}
                     {userFiles.length > 0 && (
                       <div className="border-b border-gray-200">
@@ -1168,7 +1013,7 @@ export default function ChatPage() {
                   <div className="p-3 border-t border-gray-200 bg-gray-50">
                     <p className="text-[10px] text-gray-500 leading-relaxed">
                       👁️ Click eye icon to enable/disable files<br/>
-                      🟣 <strong>Chat:</strong> Temporary • 🔵 <strong>Database:</strong> Persistent • 🟢 <strong>Global:</strong> Shared
+                      🔵 <strong>My Database:</strong> Persistent • 🟢 <strong>Global:</strong> Shared with all users
                     </p>
                   </div>
                 </div>
