@@ -35,7 +35,7 @@ export async function POST(request) {
 
     const formData = await request.formData()
     const file = formData.get('file')
-    const scope = formData.get('scope') || 'user' // 'chat', 'user', or 'global'
+    const scope = formData.get('scope') || 'user' // 'user' or 'global'
 
     if (!file) {
       return NextResponse.json(
@@ -52,10 +52,10 @@ export async function POST(request) {
     const extension = file.name.substring(file.name.lastIndexOf('.')) || ''
     const safeFileName = `${timestamp}_${randomStr}${extension.toLowerCase()}`
     
-    // Different path structure based on scope
+    // ✅ FIXED: Store all files in user folder, prefix global files
     let filePath
     if (scope === 'global') {
-      filePath = `global/${safeFileName}`
+      filePath = `${user.id}/global_${safeFileName}`
     } else {
       filePath = `${user.id}/${safeFileName}`
     }
@@ -63,6 +63,7 @@ export async function POST(request) {
     console.log('📝 Original name:', file.name)
     console.log('📝 Safe name:', safeFileName)
     console.log('📁 Path:', filePath)
+    console.log('🌍 Scope:', scope)
 
     // Parse file content
     let content = ''
@@ -83,7 +84,7 @@ export async function POST(request) {
       })
 
     if (uploadError) {
-      console.error('Upload error:', uploadError)
+      console.error('❌ Upload error:', uploadError)
       return NextResponse.json(
         { error: `Upload failed: ${uploadError.message}` },
         { status: 500 }
@@ -102,13 +103,13 @@ export async function POST(request) {
         file_type: file.type,
         file_size: file.size,
         content: content,
-        scope: scope // NEW: Store scope
+        scope: scope
       }])
       .select()
       .single()
 
     if (dbError) {
-      console.error('Database error:', dbError)
+      console.error('❌ Database error:', dbError)
       return NextResponse.json(
         { error: `Database error: ${dbError.message}` },
         { status: 500 }
@@ -130,7 +131,7 @@ export async function POST(request) {
     })
 
   } catch (error) {
-    console.error('Upload error:', error)
+    console.error('❌ Upload error:', error)
     return NextResponse.json(
       { error: error.message || 'Upload failed' },
       { status: 500 }
