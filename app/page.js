@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { Menu, FileText, Loader2, Upload, Trash2, X, Settings, Plus, MessageSquare, LogOut, User, Key, Cloud, Download, ChevronDown, ChevronRight, Database, Globe, Eye, EyeOff } from 'lucide-react'
+import { Menu, FileText, Loader2, Upload, Trash2, X, Settings, Plus, MessageSquare, LogOut, User, Key, Cloud, Download, ChevronDown, ChevronRight, Database, Globe, Eye, EyeOff, Edit2, Save } from 'lucide-react'
 
 const PROVIDERS = {
   perplexity: { name: 'Perplexity', icon: '🔮' },
@@ -17,7 +17,7 @@ const PROVIDERS = {
 export default function ChatPage() {
   const { user, loading: authLoading, signOut } = useAuth()
   const router = useRouter()
-  
+
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [currentChatId, setCurrentChatId] = useState(null)
   const [chats, setChats] = useState([])
@@ -26,27 +26,30 @@ export default function ChatPage() {
   const [showFilesDropdown, setShowFilesDropdown] = useState(false)
   const [showDrive, setShowDrive] = useState(false)
   const [settingsTab, setSettingsTab] = useState('account')
-  
+
+  // ✅ NEW: Rename chat state
+  const [renamingChatId, setRenamingChatId] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
+
   const [sectionCollapsed, setSectionCollapsed] = useState({
     user: false,
     global: false
   })
-  
+
   const [userFiles, setUserFiles] = useState([])
   const [globalFiles, setGlobalFiles] = useState([])
   const [fileEnabled, setFileEnabled] = useState({})
-  
+
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
   const dropdownRef = useRef(null)
-  
-  // AI Provider/Model
+
   const [selectedProvider, setSelectedProvider] = useState('perplexity')
   const [selectedModel, setSelectedModel] = useState('sonar-reasoning-pro')
   const [availableModels, setAvailableModels] = useState([])
   const [useOwnKey, setUseOwnKey] = useState(false)
   const [userApiKey, setUserApiKey] = useState('')
-  
+
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -57,11 +60,11 @@ export default function ChatPage() {
     huggingface: '',
     deepseek: ''
   })
-  
+
   const [driveLink, setDriveLink] = useState('')
   const [loadingLink, setLoadingLink] = useState(false)
   const [driveLinkFiles, setDriveLinkFiles] = useState([])
-  
+
   const [notification, setNotification] = useState(null)
   const messagesEndRef = useRef(null)
 
@@ -70,28 +73,27 @@ export default function ChatPage() {
     setTimeout(() => setNotification(null), 3000)
   }
 
-  // Initialize - WITH MODEL MIGRATION
+  // Initialize
   useEffect(() => {
     if (user) {
       const savedKey = localStorage.getItem('key_' + user.id)
       const savedProvider = localStorage.getItem('provider_' + user.id)
       const savedModel = localStorage.getItem('model_' + user.id)
       const savedPref = localStorage.getItem('own_' + user.id)
-      
+
       const savedFileEnabled = localStorage.getItem('fileEnabled_' + user.id)
       if (savedFileEnabled) {
         setFileEnabled(JSON.parse(savedFileEnabled))
       }
-      
+
       const savedCollapsed = localStorage.getItem('sectionCollapsed_' + user.id)
       if (savedCollapsed) {
         setSectionCollapsed(JSON.parse(savedCollapsed))
       }
-      
+
       if (savedKey) setUserApiKey(savedKey)
       if (savedProvider) setSelectedProvider(savedProvider)
-      
-      // ✅ AUTO-MIGRATE DEPRECATED MODELS
+
       if (savedModel) {
         if (savedModel === 'sonar-reasoning') {
           const newModel = 'sonar-reasoning-pro'
@@ -102,12 +104,12 @@ export default function ChatPage() {
           setSelectedModel(savedModel)
         }
       }
-      
+
       if (savedPref === 'true') setUseOwnKey(true)
-      
+
       loadUserFiles()
       loadGlobalFiles()
-      loadChatsFromStorage(user.id)
+      loadChatsFromDatabase() // ✅ CHANGED: Load from database
       fetchModels(savedProvider || 'perplexity')
     }
   }, [user])
@@ -128,14 +130,14 @@ export default function ChatPage() {
     const allFiles = [...userFiles, ...globalFiles]
     const newEnabled = { ...fileEnabled }
     let hasChanges = false
-    
+
     allFiles.forEach(file => {
       if (!(file.id in newEnabled)) {
         newEnabled[file.id] = true
         hasChanges = true
       }
     })
-    
+
     if (hasChanges) {
       setFileEnabled(newEnabled)
     }
@@ -143,23 +145,19 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (user && chats.length === 0) {
-      const initialChat = {
-        id: Date.now().toString(),
-        title: 'New Chat',
-        messages: [],
-        createdAt: new Date(),
-        userId: user.id
-      }
-      setChats([initialChat])
-      setCurrentChatId(initialChat.id)
+      createNewChat()
     }
   }, [user])
 
+  // ✅ NEW: Auto-save chat when messages change
   useEffect(() => {
-    if (user && chats.length > 0) {
-      saveChatsToStorage(user.id, chats)
+    if (user && currentChatId) {
+      const currentChat = chats.find(c => c.id === currentChatId)
+      if (currentChat && currentChat.messages.length > 0) {
+        saveChatToDatabase(currentChat)
+      }
     }
-  }, [chats, user])
+  }, [chats, currentChatId, user])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -241,26 +239,52 @@ export default function ChatPage() {
     }))
   }
 
-  const loadChatsFromStorage = (userId) => {
+  // ✅ NEW: Load chats from database
+  const loadChatsFromDatabase = async () => {
     try {
-      const saved = localStorage.getItem(`chats_${userId}`)
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        setChats(parsed)
-        if (parsed.length > 0) {
-          setCurrentChatId(parsed[0].id)
-        }
+      const { data, error } = await supabase
+        .from('chats')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+
+      if (error) throw error
+
+      if (data && data.length > 0) {
+        const loadedChats = data.map(chat => ({
+          id: chat.id,
+          title: chat.title,
+          messages: chat.messages,
+          createdAt: new Date(chat.created_at),
+          userId: chat.user_id
+        }))
+        setChats(loadedChats)
+        setCurrentChatId(loadedChats[0].id)
+      } else {
+        createNewChat()
       }
     } catch (error) {
       console.error('Failed to load chats:', error)
+      createNewChat()
     }
   }
 
-  const saveChatsToStorage = (userId, chatsData) => {
+  // ✅ NEW: Save chat to database
+  const saveChatToDatabase = async (chat) => {
     try {
-      localStorage.setItem(`chats_${userId}`, JSON.stringify(chatsData))
+      const { error } = await supabase
+        .from('chats')
+        .upsert({
+          id: chat.id,
+          user_id: user.id,
+          title: chat.title,
+          messages: chat.messages,
+          updated_at: new Date().toISOString()
+        })
+
+      if (error) throw error
     } catch (error) {
-      console.error('Failed to save chats:', error)
+      console.error('Failed to save chat:', error)
     }
   }
 
@@ -268,7 +292,7 @@ export default function ChatPage() {
 
   const createNewChat = () => {
     const newChat = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       title: 'New Chat',
       messages: [],
       createdAt: new Date(),
@@ -278,20 +302,78 @@ export default function ChatPage() {
     setCurrentChatId(newChat.id)
   }
 
-  const deleteChat = (chatId, e) => {
+  // ✅ UPDATED: Delete chat with database delete
+  const deleteChat = async (chatId, e) => {
     e?.stopPropagation()
-    if (chats.length === 1) return
-    
-    setChats(prev => prev.filter(c => c.id !== chatId))
-    if (currentChatId === chatId) {
-      const remaining = chats.filter(c => c.id !== chatId)
-      setCurrentChatId(remaining[0]?.id)
+    if (chats.length === 1) {
+      notify('Cannot delete last chat', 'error')
+      return
+    }
+
+    if (!confirm('Delete this chat?')) return
+
+    try {
+      const { error } = await supabase
+        .from('chats')
+        .delete()
+        .eq('id', chatId)
+        .eq('user_id', user.id)
+
+      if (error) throw error
+
+      setChats(prev => prev.filter(c => c.id !== chatId))
+      if (currentChatId === chatId) {
+        const remaining = chats.filter(c => c.id !== chatId)
+        setCurrentChatId(remaining[0]?.id)
+      }
+
+      notify('✓ Chat deleted', 'success')
+    } catch (error) {
+      console.error('Delete chat error:', error)
+      notify('Failed to delete chat', 'error')
+    }
+  }
+
+  // ✅ NEW: Start renaming chat
+  const startRenaming = (chatId, currentTitle, e) => {
+    e?.stopPropagation()
+    setRenamingChatId(chatId)
+    setRenameValue(currentTitle)
+  }
+
+  // ✅ NEW: Save renamed chat
+  const saveRename = async (chatId) => {
+    if (!renameValue.trim()) {
+      setRenamingChatId(null)
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('chats')
+        .update({ title: renameValue.trim() })
+        .eq('id', chatId)
+        .eq('user_id', user.id)
+
+      if (error) throw error
+
+      setChats(prev => prev.map(chat => 
+        chat.id === chatId 
+          ? { ...chat, title: renameValue.trim() }
+          : chat
+      ))
+
+      setRenamingChatId(null)
+      notify('✓ Chat renamed', 'success')
+    } catch (error) {
+      console.error('Rename error:', error)
+      notify('Failed to rename', 'error')
     }
   }
 
   const loadUserFiles = async () => {
     if (!user) return
-    
+
     try {
       const { data, error } = await supabase
         .from('files')
@@ -299,9 +381,9 @@ export default function ChatPage() {
         .eq('user_id', user.id)
         .eq('scope', 'user')
         .order('created_at', { ascending: false })
-      
+
       if (error) throw error
-      
+
       setUserFiles(data.map(f => ({
         id: f.id,
         name: f.name,
@@ -322,9 +404,9 @@ export default function ChatPage() {
         .select('*')
         .eq('scope', 'global')
         .order('created_at', { ascending: false })
-      
+
       if (error) throw error
-      
+
       setGlobalFiles(data.map(f => ({
         id: f.id,
         name: f.name,
@@ -341,47 +423,47 @@ export default function ChatPage() {
 
   const uploadFiles = async (files, scope = 'user') => {
     if (!files || files.length === 0) return
-    
+
     const arr = Array.from(files)
-    
+
     setLoading(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      
+
       if (!session) {
         notify('Login first', 'error')
         return
       }
-      
+
       let count = 0
       for (const file of arr) {
         if (file.size > 10 * 1024 * 1024) {
           notify(file.name + ' too large', 'error')
           continue
         }
-        
+
         try {
           const formData = new FormData()
           formData.append('file', file)
           formData.append('scope', scope)
-          
+
           const res = await fetch('/api/upload', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + session.access_token },
             body: formData
           })
-          
+
           if (!res.ok) throw new Error('Upload failed')
           count++
         } catch (e) {
           console.error(e)
         }
       }
-      
+
       if (count > 0) {
         if (scope === 'user') await loadUserFiles()
         if (scope === 'global') await loadGlobalFiles()
-        notify(`✓ ${count} uploaded to ${scope} database`, 'success')
+        notify(\`✓ \${count} uploaded to \${scope} database\`, 'success')
       }
     } catch (error) {
       notify('Upload failed', 'error')
@@ -392,22 +474,22 @@ export default function ChatPage() {
 
   const deleteFile = async (file) => {
     if (!confirm('Delete ' + file.name + '?')) return
-    
+
     try {
       setLoading(true)
-      
+
       await supabase.storage.from('documents').remove([file.file_path])
       await supabase.from('files').delete().eq('id', file.id).eq('user_id', user.id)
-      
+
       setFileEnabled(prev => {
         const newState = { ...prev }
         delete newState[file.id]
         return newState
       })
-      
+
       if (file.scope === 'user') await loadUserFiles()
       if (file.scope === 'global') await loadGlobalFiles()
-      
+
       notify('✓ Deleted', 'success')
     } catch (error) {
       notify('Failed', 'error')
@@ -420,7 +502,7 @@ export default function ChatPage() {
     try {
       const { data, error } = await supabase.storage.from('documents').download(file.file_path)
       if (error) throw error
-      
+
       const url = URL.createObjectURL(data)
       const a = document.createElement('a')
       a.href = url
@@ -455,7 +537,7 @@ export default function ChatPage() {
       notify('Please enter a Google Drive link', 'error')
       return
     }
-    
+
     setLoadingLink(true)
     try {
       const res = await fetch('/api/gdrive/parse-link', {
@@ -463,12 +545,12 @@ export default function ChatPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: driveLink.trim() })
       })
-      
+
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || 'Failed to fetch file')
       }
-      
+
       const data = await res.json()
       setDriveLinkFiles(prev => {
         const exists = prev.find(f => f.fileId === data.file.fileId)
@@ -478,9 +560,9 @@ export default function ChatPage() {
         }
         return [...prev, data.file]
       })
-      
+
       setDriveLink('')
-      notify(`✓ Added: ${data.file.name}`, 'success')
+      notify(\`✓ Added: \${data.file.name}\`, 'success')
     } catch (error) {
       notify(error.message || 'Failed to fetch file', 'error')
     } finally {
@@ -499,7 +581,7 @@ export default function ChatPage() {
       ...globalFiles.map(f => ({ ...f, enabled: fileEnabled[f.id] !== false })),
       ...driveLinkFiles.map(f => ({ ...f, enabled: true }))
     ]
-    
+
     return allFiles
       .filter(f => f.enabled)
       .map(f => ({ name: f.name, content: f.content }))
@@ -509,7 +591,7 @@ export default function ChatPage() {
     if (!content.trim() || loading) return
 
     const userMessage = { role: 'user', content: content.trim() }
-    
+
     setChats(prev => prev.map(chat => 
       chat.id === currentChatId 
         ? { 
@@ -524,7 +606,7 @@ export default function ChatPage() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      
+
       if (!session) {
         throw new Error('Not authenticated')
       }
@@ -533,7 +615,7 @@ export default function ChatPage() {
 
       const headers = {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`
+        'Authorization': \`Bearer \${session.access_token}\`
       }
 
       if (useOwnKey && userApiKey) {
@@ -593,14 +675,14 @@ export default function ChatPage() {
       notify('Password must be at least 6 characters', 'error')
       return
     }
-    
+
     try {
       const { error } = await supabase.auth.updateUser({
         password: newPassword
       })
-      
+
       if (error) throw error
-      
+
       notify('Password changed successfully!', 'success')
       setCurrentPassword('')
       setNewPassword('')
@@ -637,11 +719,11 @@ export default function ChatPage() {
       {/* Notification */}
       {notification && (
         <div className="fixed top-4 right-4 z-50 animate-slide-in">
-          <div className={`border rounded-xl px-4 py-2 backdrop-blur-xl ${
+          <div className={\`border rounded-xl px-4 py-2 backdrop-blur-xl \${
             notification.type === 'success' ? 'bg-green-50 border-green-400 text-green-800' : 
             notification.type === 'error' ? 'bg-red-50 border-red-400 text-red-800' : 
             'bg-blue-50 border-blue-400 text-blue-800'
-          }`}>
+          }\`}>
             <span className="text-sm font-medium">{notification.message}</span>
           </div>
         </div>
@@ -658,7 +740,7 @@ export default function ChatPage() {
       )}
 
       {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'w-64' : 'w-0'} transition-all duration-300 border-r border-gray-200 flex flex-col overflow-hidden bg-gray-50`}>
+      <div className={\`\${sidebarOpen ? 'w-64' : 'w-0'} transition-all duration-300 border-r border-gray-200 flex flex-col overflow-hidden bg-gray-50\`}>
         <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-white">
           <h1 className="font-semibold text-lg">Chats</h1>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden p-1 hover:bg-gray-100 rounded">
@@ -678,25 +760,56 @@ export default function ChatPage() {
             <button
               key={chat.id}
               onClick={() => setCurrentChatId(chat.id)}
-              className={`w-full text-left p-3 rounded-lg mb-1 group hover:bg-gray-200 transition-colors ${
+              className={\`w-full text-left p-3 rounded-lg mb-1 group hover:bg-gray-200 transition-colors \${
                 currentChatId === chat.id ? 'bg-white border border-gray-300' : ''
-              }`}
+              }\`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-start gap-2 flex-1 min-w-0">
                   <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-500" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{chat.title}</p>
+                    {/* ✅ NEW: Rename input or title */}
+                    {renamingChatId === chat.id ? (
+                      <input
+                        type="text"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => saveRename(chat.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveRename(chat.id)
+                          if (e.key === 'Escape') setRenamingChatId(null)
+                        }}
+                        className="text-sm font-medium w-full px-1 py-0.5 border border-gray-300 rounded"
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium truncate">{chat.title}</p>
+                    )}
                     <p className="text-xs text-gray-500 mt-0.5">
                       {chat.messages?.length || 0} messages
                     </p>
                   </div>
                 </div>
-                {chats.length > 1 && (
-                  <button onClick={(e) => deleteChat(chat.id, e)} className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-opacity">
-                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                {/* ✅ NEW: Rename and Delete buttons */}
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button 
+                    onClick={(e) => startRenaming(chat.id, chat.title, e)} 
+                    className="p-1 hover:bg-blue-100 rounded"
+                    title="Rename"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-blue-600" />
                   </button>
-                )}
+                  {chats.length > 1 && (
+                    <button 
+                      onClick={(e) => deleteChat(chat.id, e)} 
+                      className="p-1 hover:bg-red-100 rounded"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                    </button>
+                  )}
+                </div>
               </div>
             </button>
           ))}
