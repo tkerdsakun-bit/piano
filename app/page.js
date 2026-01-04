@@ -463,7 +463,7 @@ export default function ChatPage() {
       if (count > 0) {
         if (scope === 'user') await loadUserFiles()
         if (scope === 'global') await loadGlobalFiles()
-        notify(\`✓ \${count} uploaded to \${scope} database\`, 'success')
+        notify(`✓ ${count} uploaded to \${scope} database\`, 'success')
       }
     } catch (error) {
       notify('Upload failed', 'error')
@@ -562,7 +562,7 @@ export default function ChatPage() {
       })
 
       setDriveLink('')
-      notify(\`✓ Added: \${data.file.name}\`, 'success')
+      notify(`✓ Added: ${data.file.name}`, 'success')
     } catch (error) {
       notify(error.message || 'Failed to fetch file', 'error')
     } finally {
